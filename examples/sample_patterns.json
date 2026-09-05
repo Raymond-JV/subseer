@@ -1,0 +1,102 @@
+{
+  "themes": [
+    {
+      "name": "Greek-god codenames",
+      "description": "Standalone hosts named after Olympian gods.",
+      "evidence": [
+        "zeus.example.com",
+        "apollo.example.com",
+        "athena.example.com",
+        "hermes.example.com"
+      ],
+      "kind": "enumerate",
+      "candidates": [
+        "hera.example.com",
+        "ares.example.com",
+        "poseidon.example.com",
+        "hades.example.com",
+        "artemis.example.com",
+        "demeter.example.com",
+        "dionysus.example.com",
+        "hephaestus.example.com",
+        "aphrodite.example.com"
+      ]
+    },
+    {
+      "name": "numbered service hosts",
+      "description": "Service name immediately followed by a zero-padded counter.",
+      "evidence": [
+        "web01.example.com",
+        "web02.example.com",
+        "web03.example.com",
+        "node01.example.com",
+        "node02.example.com"
+      ],
+      "kind": "template",
+      "template": "{svc}{n}.example.com",
+      "slots": [
+        {"name": "svc", "kind": "enum", "values": ["web", "node"]},
+        {"name": "n", "kind": "range", "min": 1, "max": 20, "pad": 2}
+      ]
+    },
+    {
+      "name": "env-suffixed services",
+      "description": "Service name, a hyphen, then a deployment environment.",
+      "evidence": [
+        "api-dev.example.com",
+        "api-staging.example.com",
+        "api-prod.example.com",
+        "auth-dev.example.com",
+        "auth-prod.example.com",
+        "billing-staging.example.com"
+      ],
+      "kind": "template",
+      "template": "{svc}-{env}.example.com",
+      "slots": [
+        {"name": "svc", "kind": "enum", "values": ["api", "auth", "billing"]},
+        {"name": "env", "kind": "enum", "values": ["dev", "staging", "prod", "uat", "qa"]}
+      ]
+    },
+    {
+      "name": "versioned services",
+      "description": "Service name with a -vN version suffix; presence of v2 implies older/newer versions.",
+      "evidence": [
+        "payments-v1.example.com",
+        "payments-v2.example.com"
+      ],
+      "kind": "template",
+      "template": "{svc}-v{n}.example.com",
+      "slots": [
+        {"name": "svc", "kind": "enum", "values": ["payments"]},
+        {"name": "n", "kind": "range", "min": 1, "max": 5}
+      ]
+    },
+    {
+      "name": "regional gateways",
+      "description": "AWS-style region code as a subdomain of a 'gw' gateway host.",
+      "evidence": [
+        "us-east-1.gw.example.com",
+        "eu-west-1.gw.example.com"
+      ],
+      "kind": "template",
+      "template": "{region}.gw.example.com",
+      "slots": [
+        {
+          "name": "region",
+          "kind": "enum",
+          "values": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-central-1",
+            "ap-southeast-1",
+            "ap-northeast-1"
+          ]
+        }
+      ]
+    }
+  ]
+}

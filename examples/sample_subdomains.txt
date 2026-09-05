@@ -1,0 +1,23 @@
+# Small illustrative target. Three overlapping conventions:
+#   - numbered hosts (template)
+#   - env + service (template)
+#   - Greek-god codenames (enumerate / knowledge-driven)
+web01.example.com
+web02.example.com
+web03.example.com
+node01.example.com
+node02.example.com
+api-dev.example.com
+api-staging.example.com
+api-prod.example.com
+auth-dev.example.com
+auth-prod.example.com
+billing-staging.example.com
+zeus.example.com
+apollo.example.com
+athena.example.com
+hermes.example.com
+payments-v1.example.com
+payments-v2.example.com
+us-east-1.gw.example.com
+eu-west-1.gw.example.com

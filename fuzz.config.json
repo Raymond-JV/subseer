@@ -1,0 +1,23 @@
+{
+  "top_words": 4,
+  "min_word_len": 3,
+  "templates": {
+    "whole_sub": true,
+    "word_fuzz": true,
+    "num": true,
+    "env": true,
+    "region": true,
+    "dc": true,
+    "cc": true,
+    "version": true,
+    "color": true,
+    "instance": true,
+    "dir": true,
+    "infra": false,
+    "tech": false,
+    "separator_swaps": true,
+    "pluralize": true,
+    "affix_strip": true,
+    "label_insert": false
+  }
+}

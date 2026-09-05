@@ -1,0 +1,21 @@
+# secrets / env
+.env
+.env.local
+*.key
+
+# python build / cache
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# generated tool output
+/candidates.txt
+/patterns.json
+/enriched.txt
+*_candidates.txt
+*_expanded.txt
