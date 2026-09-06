@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import sys
 import urllib.error
 import urllib.request
 
@@ -415,12 +416,25 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
         if progress is not None:
             progress(call, total_calls, len(merged))
 
+    def _try_call(user, run_seed):
+        """One enrich call, but degrade gracefully: if the AI backend gives up
+        (rate limit exhausted / unreachable), keep whatever we've merged so far
+        (mined templates + any earlier passes) instead of killing the whole run."""
+        try:
+            _merge_theme_data(merged, once(user, run_seed))
+        except SystemExit as exc:                       # backend unavailable after retries
+            print(f"    enrich call skipped ({exc}); keeping mined + partial results",
+                  file=sys.stderr)
+        except Exception as exc:                        # parse/transport hiccup on one call
+            print(f"    enrich call failed ({exc!r}); keeping mined + partial results",
+                  file=sys.stderr)
+        _tick()
+
     # Job A - enrich each template batch once (no residual in these prompts).
     base_seed = seed if seed is not None else 0
     for batch in batches:
         user = build_enrich_prompt(batch, [], apex, sample)
-        _merge_theme_data(merged, once(user, base_seed))
-        _tick()
+        _try_call(user, base_seed)
 
     # Job B - Monte-Carlo discovery over the residual, `runs` passes.
     if do_discovery:
@@ -431,8 +445,7 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
             else:
                 slice_ = residual
             user = build_enrich_prompt([], slice_, apex, sample)  # residual-only -> discovery
-            _merge_theme_data(merged, once(user, run_seed))
-            _tick()
+            _try_call(user, run_seed)
 
     flat = [
         {"template": d["template"], "label": d["label"], "novel": d["novel"],

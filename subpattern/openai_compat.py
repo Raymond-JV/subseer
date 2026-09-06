@@ -11,10 +11,35 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import re
+import time
 import urllib.error
 import urllib.request
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+# Retry knobs (overridable via env for aggressive concurrency tuning).
+_MAX_RETRIES = int(os.environ.get("SUBPATTERN_OPENAI_RETRIES", "8"))
+_BACKOFF_BASE = float(os.environ.get("SUBPATTERN_OPENAI_BACKOFF", "0.5"))  # seconds
+_BACKOFF_CAP = 30.0
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _retry_after_seconds(err: urllib.error.HTTPError, body: str) -> float | None:
+    """How long the server told us to wait, if anything: the Retry-After header
+    (seconds) or the "try again in 139ms"/"in 1.5s" hint OpenAI puts in the body."""
+    hdr = err.headers.get("Retry-After") if err.headers else None
+    if hdr:
+        try:
+            return float(hdr)
+        except ValueError:
+            pass
+    m = re.search(r"try again in\s+([\d.]+)\s*(ms|s)\b", body, re.IGNORECASE)
+    if m:
+        val = float(m.group(1))
+        return val / 1000.0 if m.group(2).lower() == "ms" else val
+    return None
 
 
 def _ensure_json_hint(system: str, user: str) -> str:
@@ -58,15 +83,34 @@ def chat_json(model: str, system: str, user: str, *,
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="ignore")[:300] if hasattr(e, "read") else ""
-        raise SystemExit(f"OpenAI API error {e.code} at {base_url}: {detail}")
-    except urllib.error.URLError as e:
-        reason = e.reason if hasattr(e, "reason") else e
-        raise SystemExit(f"Could not reach {base_url} ({reason}).")
+    # Retry transient failures (429 rate-limit, 5xx) with backoff. Honors the server's
+    # Retry-After/"try again in Xms" hint when present, else exponential backoff + jitter.
+    # This lets many concurrent callers self-throttle to the TPM ceiling instead of each
+    # 429 permanently dropping that host's work.
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode())
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="ignore")[:300] if hasattr(e, "read") else ""
+            if e.code in _RETRY_STATUS and attempt < _MAX_RETRIES:
+                # Floor the server's hint with escalating backoff: a "try again in 183ms" hint
+                # is honored once, but if the TPM bucket stays saturated the wait grows
+                # (0.5,1,2,4,8,16,30…s) so we actually give it time to drain instead of
+                # burning all retries in one second. Jitter de-syncs concurrent callers.
+                hint = _retry_after_seconds(e, detail) or 0.0
+                backoff = min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_CAP)
+                time.sleep(max(hint, backoff) + random.uniform(0, _BACKOFF_BASE))
+                continue
+            raise SystemExit(f"OpenAI API error {e.code} at {base_url}: {detail}")
+        except urllib.error.URLError as e:
+            reason = e.reason if hasattr(e, "reason") else e
+            if attempt < _MAX_RETRIES:                        # transient network hiccup
+                time.sleep(min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_CAP)
+                           + random.uniform(0, _BACKOFF_BASE))
+                continue
+            raise SystemExit(f"Could not reach {base_url} ({reason}).")
     try:
         return data["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError):
