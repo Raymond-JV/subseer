@@ -19,7 +19,7 @@ Three generators, each good at something different:
 |---|---|---|
 | **mine** | Learn structural templates from your hosts and recombine the values you have (cross-fill, numeric ranges). | code, offline, free |
 | **fuzz** | Mutate each host — separators, plurals, affixes, typed-slot swaps (`dev`→`qa/prod`), dictionary-word FUZZ. | code, offline, free |
-| **AI** | Fill mined slots with real-world values you *don't* have (`memphis, austin` → all 30 teams), discover latent slots, and propose net-new names. | LLM (OpenAI or Ollama) |
+| **AI** | Fill mined slots with real-world values you *don't* have (`memphis, austin` → all 30 teams), discover latent slots, and predict net-new names. | LLM (OpenAI or Ollama) |
 
 The split matters: an LLM is great at *knowledge* but a bad, expensive bulk
 enumerator. So the model only emits compact things — slot values, a few template
@@ -29,7 +29,7 @@ is tiny but expands to dozens of hosts.
 ```
 known subs ─▶ mine (code) ─┐
              fuzz (code) ──┤─▶ merge + dedup ─▶ candidates
-             AI enrich/propose (optional) ─┘
+             AI enrich/predict (optional) ─┘
 ```
 
 ## Install
@@ -53,7 +53,7 @@ export OPENAI_API_KEY=sk-...          # for --gpt
 # Offline, free — mine + fuzz:
 subseer subs.txt
 
-# Add AI (OpenAI gpt-4o-mini): enrich mined slots + discover + propose:
+# Add AI (OpenAI gpt-4o-mini): enrich mined slots + discover + predict:
 subseer subs.txt --gpt
 
 # AI via a local model (offline, private):
@@ -63,7 +63,7 @@ subseer subs.txt --ollama            # bare = qwen2.5
 subseer subs.txt --mine --gpt
 
 # Stream straight into your resolver (results to stdout, logs to stderr):
-subseer subs.txt --gpt --out - | dnsx | httpx -sc
+subseer subs.txt --gpt -o - | dnsx | httpx -sc
 ```
 
 `subseer --help` groups every flag under the generator it belongs to.
@@ -77,19 +77,19 @@ subseer subs.txt --gpt --out - | dnsx | httpx -sc
   `.co.uk`, `.com.mx`, …).
 - **`--fuzz`** — per-host mutations: separator swaps, pluralize, affix strip, typed
   closed-vocab swaps, and dictionary-word `FUZZ`. Used **alone**, it *streams* the
-  full expansion to `--out` (any wordlist size, no memory blowup):
+  full expansion to `-o` (any wordlist size, no memory blowup):
   ```bash
-  subseer subs.txt --fuzz --wordlist /usr/share/seclists/.../raft-medium.txt --out - | dnsx
+  subseer subs.txt --fuzz --wordlist /usr/share/seclists/.../raft-medium.txt -o - | dnsx
   ```
-- **`--propose`** — the model proposes net-new names templates can't produce (infra
+- **`--predict`** — the model predicts net-new names templates can't produce (infra
   it infers, target-specific brands, theme continuation). Needs a backend.
 
 With **no generator flag**, `subseer` runs **mine + fuzz** (and, if a backend is
-set, also enrich + propose) and merges everything into one deduped file.
+set, also enrich + predict) and merges everything into one deduped file.
 
 ## AI backend
 
-Pick one; a backend flag turns on the AI layer (enriches `--mine`, powers `--propose`):
+Pick one; a backend flag turns on the AI layer (enriches `--mine`, powers `--predict`):
 
 | Flag | Backend | Default model |
 |---|---|---|
@@ -116,13 +116,23 @@ Three knobs default to `auto` and scale with your list size — you rarely set t
 
 ## Output
 
-- `--out PATH` — candidates (default `candidates.txt`); `--out -` streams to stdout
+- `-o` / `--out PATH` — candidates (default `candidates.txt`); `-o -` streams to stdout
   with logs on stderr, so it pipes cleanly into `dnsx`/`httpx`.
-- `--patterns PATH` — opt-in: also write the discovered themes as JSON (for
-  inspection, `--themes` reuse, or feeding a permutation tool like gotator's `-perm`).
-- `--themes PATH` — expand a saved themes JSON to candidates with no model call.
-- `--per-theme-cap` / `--max-candidates` — caps (0 = unlimited).
-- `--dry-run` — preview template cardinalities, write nothing.
+- `--limit N` — max candidates to write (default 200,000; `0` = unlimited). Each
+  template is also capped at 50,000 so one huge template can't crowd out the rest.
+- `-q` / `--quiet` — results and errors only (no banner line, no progress logs).
+- `-v` / `--version` — print the version.
+
+Run bare `subseer` for the full seer and a usage hint; normal runs show a single
+header line on stderr instead, and nothing at all when stderr isn't a terminal.
+
+## Run logs
+
+For debugging, every run is recorded automatically as one JSON file in
+`~/.subseer/runs/` (override with `$SUBSEER_LOG_DIR`): timestamp, version, the full
+command, the input and its size, backend and model, the templates learned (with
+their values), per-generator counts, anything trimmed by `--limit`, and where the
+output went. API keys are read from the environment and never recorded.
 
 ## Suggested pipeline
 
@@ -130,7 +140,7 @@ Generation is cheap; resolution is where you spend time — so DNS-filter before
 HTTP-probe:
 
 ```bash
-subseer subs.txt --gpt --out candidates.txt
+subseer subs.txt --gpt -o candidates.txt
 dnsx  -l candidates.txt -o resolved.txt          # keep only hosts that exist
 httpx -l resolved.txt -sc -title -rl 10          # probe the survivors, politely
 ```

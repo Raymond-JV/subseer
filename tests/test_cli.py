@@ -1,17 +1,28 @@
-"""Tests for the CLI's auto-scaling helpers. Stdlib only."""
+"""Tests for the CLI: auto-scaling helpers, banner behavior, -q / --version. Stdlib only."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
+
+# Keep test runs out of the real ~/.subseer/runs.
+_LOG_DIR = tempfile.mkdtemp(prefix="subseer-test-logs-")
+os.environ["SUBSEER_LOG_DIR"] = _LOG_DIR
+
+from subseer import __version__, banner
 from subseer.cli import (
     _auto_min_values,
     _auto_runs,
     _auto_sample,
     _resolve_auto,
+    main,
 )
 
 
@@ -54,6 +65,115 @@ def test_resolve_auto_invalid_exits():
         assert e.code == 2
     else:
         raise AssertionError("expected SystemExit on invalid value")
+
+
+class _FakeTTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def _capture(fn, *args):
+    """Run fn with stdout/stderr captured; returns (result, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        result = fn(*args)
+    return result, out.getvalue(), err.getvalue()
+
+
+def test_bare_invocation_is_the_welcome_screen():
+    code, out, _ = _capture(main, [])
+    assert code == 0
+    assert "usage: subseer" in out
+
+
+def test_version_prints_version_on_stdout():
+    code, out, _ = _capture(main, ["--version"])
+    assert code == 0
+    assert out.strip() == f"subseer {__version__}"
+
+
+def test_quiet_run_writes_results_but_no_logs():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "out.txt")
+        code, out, err = _capture(main, ["-q", "-d", "api.dev.example.com", "--out", path])
+        assert code == 0
+        assert out == "" and err == ""
+        with open(path, encoding="utf-8") as f:
+            assert f.read().strip()
+
+
+def test_limit_caps_the_written_output():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "out.txt")
+        code, _, _ = _capture(main, ["-q", "-d", "api.dev.example.com", "--limit", "5", "-o", path])
+        assert code == 0
+        with open(path, encoding="utf-8") as f:
+            assert len(f.read().split()) == 5
+
+
+def _logs():
+    return sorted(os.path.join(_LOG_DIR, f) for f in os.listdir(_LOG_DIR))
+
+
+def test_every_run_writes_a_run_log():
+    before = set(_logs())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "out.txt")
+        _capture(main, ["-q", "-d", "api.dev.example.com", "-o", path])
+        with open(path, encoding="utf-8") as f:
+            written = len(f.read().split())
+    new = [p for p in _logs() if p not in before]
+    assert len(new) == 1
+    with open(new[0], encoding="utf-8") as f:
+        rec = json.load(f)
+    assert rec["command"][0] == "subseer" and "-q" in rec["command"]
+    assert rec["input"]["kind"] == "domain" and rec["input"]["count"] == 1
+    assert rec["output"]["written"] == written
+    assert rec["exit_code"] == 0 and rec["mode"] == "generate"
+    assert "templates" in rec and "fuzz" in rec["counts"]
+
+
+def test_input_errors_are_not_logged():
+    before = set(_logs())
+    _capture(main, ["-q"])            # no input -> error, nothing ran
+    assert set(_logs()) == before
+
+
+def test_run_log_records_learned_templates():
+    with tempfile.TemporaryDirectory() as d:
+        subs = os.path.join(d, "subs.txt")
+        with open(subs, "w", encoding="utf-8") as f:
+            f.write("api.dev.example.com\napi.prod.example.com\napi.qa.example.com\n"
+                    "web.dev.example.com\nweb.prod.example.com\n")
+        before = set(_logs())
+        _capture(main, ["-q", subs, "--mine", "-o", os.path.join(d, "a.txt")])
+    (new,) = [p for p in _logs() if p not in before]
+    with open(new, encoding="utf-8") as f:
+        rec = json.load(f)
+    assert rec["input"]["kind"] == "file" and rec["input"]["count"] == 5
+    assert rec["templates"] and "template" in rec["templates"][0]
+
+
+def test_header_is_one_line_on_a_tty_and_silent_otherwise():
+    tty, pipe = _FakeTTY(), io.StringIO()
+    old = os.environ.get("NO_COLOR")
+    os.environ["NO_COLOR"] = "1"
+    try:
+        banner.header("9.9.9", tty)
+        banner.header("9.9.9", pipe)
+    finally:
+        if old is None:
+            os.environ.pop("NO_COLOR")
+        else:
+            os.environ["NO_COLOR"] = old
+    assert tty.getvalue() == "subseer v9.9.9 - sees the subs you don't\n"
+    assert pipe.getvalue() == ""
+
+
+def test_full_art_skipped_when_not_a_tty():
+    pipe = io.StringIO()
+    banner.show(pipe)
+    assert pipe.getvalue() == ""
 
 
 def _run_all():

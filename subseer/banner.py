@@ -94,7 +94,8 @@ _ART = """\
 ....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....
 ................................................"""
 
-_TAGLINE = "s u b s e e r   -   sees the subs you don't"
+_MOTTO = "sees the subs you don't"
+_TAGLINE = "s u b s e e r   -   " + _MOTTO
 
 _IDX = {ch: idx for ch, (_hex, idx) in _PAL.items()}
 
@@ -137,18 +138,39 @@ def _emit(text: str, stream) -> None:
         pass  # a decorative banner must never break the tool
 
 
-def show(stream=None) -> None:
-    """Print the pixel seer to ``stream`` (default stderr) on a color TTY.
+def _is_tty(stream) -> bool:
+    return bool(getattr(stream, "isatty", lambda: False)())
 
-    Skips when piped/redirected, NO_COLOR is set, or TERM=dumb -- so it never
-    pollutes `--out -` pipes or logs.
+
+def _color_ok() -> bool:
+    return not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+
+
+def show(stream=None) -> None:
+    """Print the full pixel seer to ``stream`` (default stderr) on a color TTY.
+
+    Used for the welcome screen (bare `subseer`). Skips when piped/redirected,
+    NO_COLOR is set, or TERM=dumb -- so it never pollutes `-o -` pipes or logs.
     """
     stream = stream or sys.stderr
-    if (os.environ.get("NO_COLOR")
-            or os.environ.get("TERM") == "dumb"
-            or not getattr(stream, "isatty", lambda: False)()):
+    if not (_is_tty(stream) and _color_ok()):
         return
     _emit(render() + "\n  " + _TAGLINE + "\n\n", stream)
+
+
+def header(version: str, stream=None) -> None:
+    """One-line banner for normal runs, on ``stream`` (default stderr) when it's a TTY.
+
+    Plain text under NO_COLOR / TERM=dumb; nothing at all when redirected.
+    """
+    stream = stream or sys.stderr
+    if not _is_tty(stream):
+        return
+    if _color_ok():
+        line = f"\x1b[1;38;5;81msubseer\x1b[0m \x1b[38;5;245mv{version} - {_MOTTO}\x1b[0m"
+    else:
+        line = f"subseer v{version} - {_MOTTO}"
+    _emit(line + "\n", stream)
 
 
 if __name__ == "__main__":
