@@ -17,10 +17,7 @@ import re
 import urllib.error
 import urllib.request
 
-from . import pricing
-from .discover import _make_client
 from .mine import detect_apex
-from .models import Proposal
 
 SYSTEM_PROMPT = """\
 You are an expert at subdomain reconnaissance for AUTHORIZED security testing \
@@ -93,29 +90,6 @@ def _finalize(candidates, subs, apex) -> list[str]:
             seen.add(norm)
             out.append(norm)
     return out
-
-
-def run_propose(subs, apex: str | None = None, model: str = "claude-sonnet-4-6",
-                count: int = 1000, sample: int = 3000, covered_templates=None,
-                client=None) -> list[str]:
-    """Propose net-new subdomains via the Anthropic API. Returns deduped new guesses.
-
-    ``covered_templates`` (e.g. from --mine) tells the model which structural /
-    permutation patterns are already handled, so it focuses on names OUTSIDE them.
-    """
-    apex = apex if apex is not None else detect_apex(subs)
-    client = client or _make_client()
-    user = _user_prompt(subs, apex, sample, count, covered_templates)
-    resp = client.messages.parse(  # no thinking param -> thinking off, cheap
-        model=model,
-        max_tokens=16000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user}],
-        output_format=Proposal,
-    )
-    pricing.report(resp, model, "propose")
-    parsed = resp.parsed_output
-    return _finalize(parsed.candidates if parsed else [], subs, apex)
 
 
 # JSON schema for Ollama's structured-output `format` field.
@@ -250,5 +224,5 @@ def run_propose_openai(subs, apex: str | None = None, model: str = "gpt-4o-mini"
     return _finalize(merged, subs, apex)
 
 
-__all__ = ["run_propose", "run_propose_local", "run_propose_openai",
+__all__ = ["run_propose_local", "run_propose_openai",
            "build_sample", "normalize_candidate"]

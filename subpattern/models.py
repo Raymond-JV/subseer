@@ -65,52 +65,6 @@ class Theme(BaseModel):
     )
 
 
-class Discovery(BaseModel):
-    """Top-level structured response from a discovery call."""
-
-    themes: list[Theme]
-
-
-class Verdict(BaseModel):
-    """The critic's judgment on one theme."""
-
-    name: str = Field(description="The theme name being judged, echoed exactly.")
-    supported: bool = Field(
-        description="True only if the cited evidence genuinely exhibits the stated rule."
-    )
-    reason: str = Field(description="One-sentence justification.")
-
-
-class CriticReport(BaseModel):
-    """Top-level structured response from a critic call."""
-
-    verdicts: list[Verdict]
-
-
-class Judgment(BaseModel):
-    """The refiner's verdict on one auto-detected template."""
-
-    template: str = Field(description="The template string being judged, echoed exactly.")
-    name: str = Field(description="A short human-readable label for this template.")
-    keep: bool = Field(description="False if it's noise (random-id slots, regenerates only knowns).")
-    priority: int = Field(description="1-5; 5 = most likely to surface new live hosts.")
-    note: str = Field(default="", description="Brief reason (optional).")
-
-
-class RefineReport(BaseModel):
-    """Top-level structured response from a refine call."""
-
-    judgments: list[Judgment]
-
-
-class Proposal(BaseModel):
-    """Knowledge-based net-new subdomain guesses."""
-
-    candidates: list[str] = Field(
-        description="Proposed new subdomains under the apex, most-likely first."
-    )
-
-
 class SlotSpec(BaseModel):
     """One placeholder's concrete value list, for enrichment output."""
 

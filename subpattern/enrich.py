@@ -26,11 +26,9 @@ import sys
 import urllib.error
 import urllib.request
 
-from . import pricing
-from .discover import _make_client
 from .expand import slot_size, slot_values
 from .mine import detect_apex
-from .models import EnrichedTheme, Enrichment, Slot, Theme
+from .models import Slot, Theme
 
 SYSTEM_PROMPT = """\
 You are an expert at subdomain reconnaissance for AUTHORIZED security testing. You \
@@ -203,28 +201,6 @@ def enrichment_stats(mined, enriched) -> dict:
 
 
 # --- API path -----------------------------------------------------------------
-
-def run_enrich(themes, subs, apex: str | None = None, residual=None,
-               model: str = "claude-sonnet-4-6", sample: int = 150,
-               client=None) -> list[Theme]:
-    """Enrich + discover slots via the Anthropic API. Returns new Theme objects."""
-    apex = apex if apex is not None else detect_apex(subs)
-    residual = residual if residual is not None else []
-    client = client or _make_client()
-    user = build_enrich_prompt(themes, residual, apex, sample)
-    resp = client.messages.parse(
-        model=model,
-        max_tokens=16000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user}],
-        output_format=Enrichment,
-    )
-    pricing.report(resp, model, "enrich")
-    parsed = resp.parsed_output
-    data = parsed.themes if parsed else []
-    mined = {t.template for t in themes}
-    return enrichment_to_themes(data, apex, mined)
-
 
 # --- local Ollama path --------------------------------------------------------
 
@@ -502,6 +478,6 @@ def run_enrich_openai(themes, subs, apex: str | None = None, residual=None,
 
 
 __all__ = [
-    "run_enrich", "run_enrich_local", "run_enrich_openai", "enrichment_to_themes",
+    "run_enrich_local", "run_enrich_openai", "enrichment_to_themes",
     "enrichment_stats", "build_enrich_prompt", "SYSTEM_PROMPT",
 ]
