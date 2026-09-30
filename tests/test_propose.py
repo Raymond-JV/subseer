@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from subpattern.propose import (
+from subseer.propose import (
     _finalize,
     _parse_candidates,
     build_sample,

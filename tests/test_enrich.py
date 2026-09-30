@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from subpattern.enrich import (
+from subseer.enrich import (
     _merge_theme_data,
     _parse_enrichment,
     build_enrich_prompt,
@@ -29,8 +29,8 @@ def test_merge_theme_data_tolerates_malformed_shapes():
     _merge_theme_data(dst, items)  # must not raise
     assert dst["api-{s1}.example.com"]["slots"]["s1"] == ["dev"]   # string coerced to [dev]
     assert "{s1}.example.com" in dst                                # recorded despite bad slots
-from subpattern.expand import expand
-from subpattern.models import Slot, Theme
+from subseer.expand import expand
+from subseer.models import Slot, Theme
 
 
 def _theme(template, slots):

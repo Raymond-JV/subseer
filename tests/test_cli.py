@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from subpattern.cli import (
+from subseer.cli import (
     _auto_min_values,
     _auto_runs,
     _auto_sample,

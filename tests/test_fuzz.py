@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from subpattern.fuzz import (
+from subseer.fuzz import (
     affix_mutations,
     fuzz_host,
     generate,
@@ -50,7 +50,7 @@ def test_label_inserts_typed_prepend_and_preapex():
 
 
 def test_label_insert_gated_by_config():
-    cfg = dict(__import__("subpattern.fuzz", fromlist=["DEFAULT_CONFIG"]).DEFAULT_CONFIG)
+    cfg = dict(__import__("subseer.fuzz", fromlist=["DEFAULT_CONFIG"]).DEFAULT_CONFIG)
     cfg["label_insert"] = True
     got = fuzz_host("api.example.com", "example.com", words=set(), config=cfg)
     assert "{env}.api.example.com" in got     # on when enabled
@@ -159,7 +159,7 @@ def test_load_wordlist(tmp_path=None):
     import os
     import tempfile
 
-    from subpattern.fuzz import load_wordlist
+    from subseer.fuzz import load_wordlist
 
     fd, path = tempfile.mkstemp(suffix=".txt")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -172,7 +172,7 @@ def test_load_wordlist(tmp_path=None):
 
 
 def test_expand_templates():
-    from subpattern.fuzz import expand_templates
+    from subseer.fuzz import expand_templates
 
     templates = ["cms-{env}.example.com", "raptorsFUZZ.example.com", "ns{num}.example.com"]
     out = expand_templates(templates, words={"api", "dev"}, num_min=1, num_max=3)
@@ -184,7 +184,7 @@ def test_expand_templates():
 
 
 def test_iter_expand_templates_streams():
-    from subpattern.fuzz import iter_expand_templates
+    from subseer.fuzz import iter_expand_templates
 
     templates = ["cms-{env}.example.com", "raptorsFUZZ.example.com", "ns{num}.example.com"]
     out = list(iter_expand_templates(templates, words={"api"}, num_min=1, num_max=2))
@@ -198,7 +198,7 @@ def test_iter_expand_templates_streams():
 
 
 def test_expand_skip_fuzz():
-    from subpattern.fuzz import expand_templates
+    from subseer.fuzz import expand_templates
 
     templates = ["cms-{env}.example.com", "raptorsFUZZ.example.com"]
     out = expand_templates(templates, words={"api", "dev"}, include_fuzz=False)

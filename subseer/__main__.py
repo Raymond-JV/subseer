@@ -1,4 +1,4 @@
-from subpattern.cli import main
+from subseer.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

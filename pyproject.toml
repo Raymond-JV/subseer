@@ -1,10 +1,9 @@
 [project]
-name = "subpattern"
+name = "subseer"
 version = "0.1.0"
-description = "Discover subdomain naming conventions with an LLM, expand them into candidate wordlists in code."
+description = "Generate candidate subdomains from a known list: offline pattern mining + fuzzing, with optional LLM enrichment (OpenAI or Ollama)."
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40",
     "pydantic>=2",
 ]
 
@@ -12,11 +11,11 @@ dependencies = [
 dev = ["pytest>=7"]
 
 [project.scripts]
-subpattern = "subpattern.cli:main"
+subseer = "subseer.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["subpattern*"]
+include = ["subseer*"]

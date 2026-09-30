@@ -1,4 +1,4 @@
-"""Command-line interface for subpattern."""
+"""Command-line interface for subseer."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .pipeline import expand_themes, load_subdomains, write_patterns
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="subpattern",
+        prog="subseer",
         description="Generate candidate subdomains from a known list. By default runs "
         "the offline generators (mine + fuzz). Add --gpt or --ollama to also expand "
         "patterns with an LLM.",

@@ -12,7 +12,7 @@ from types import SimpleNamespace as NS
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from subpattern.expand import cardinality, expand, expand_all, slot_size, slot_values
+from subseer.expand import cardinality, expand, expand_all, slot_size, slot_values
 
 
 def slot(name, kind, values=None, mn=0, mx=0, pad=0, step=1):

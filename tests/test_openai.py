@@ -9,9 +9,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import subpattern.openai_compat as oc
-from subpattern.enrich import run_enrich_openai
-from subpattern.propose import run_propose_openai
+import subseer.openai_compat as oc
+from subseer.enrich import run_enrich_openai
+from subseer.propose import run_propose_openai
 
 
 def _stub_chat(responses):
@@ -46,7 +46,7 @@ def test_propose_openai_multi_run_merges():
 
 
 def test_enrich_openai_builds_themes():
-    from subpattern.models import Slot, Theme
+    from subseer.models import Slot, Theme
 
     mined = [Theme(name="t", description="d", evidence=[], kind="template",
                    template="{s1}.dleague.example.com",
@@ -62,7 +62,7 @@ def test_enrich_openai_builds_themes():
 
 
 def test_ensure_json_hint():
-    from subpattern.openai_compat import _ensure_json_hint
+    from subseer.openai_compat import _ensure_json_hint
     # appended when neither prompt mentions json
     assert _ensure_json_hint("expand slots", "here are hosts").endswith("JSON object.")
     # left alone when json already present (case-insensitive)

@@ -1,211 +1,145 @@
-# subpattern
+# subseer
 
-Discover the **naming conventions** an organization uses for its subdomains with an
-LLM, then expand those conventions into a candidate wordlist **in code**. Built for
-authorized recon (bug bounty / pentest): feed it the subdomains you already know,
-get back plausible ones you don't.
+Generate candidate subdomains from the ones you already know. Feed `subseer` a
+list of known subdomains; it learns their **naming patterns** and returns plausible
+new hosts to go resolve. Built for authorized recon (bug bounty / pentest).
+
+Offline and free by default; add an LLM (OpenAI or a local Ollama model) only when
+you want it to reach beyond what the data alone can show.
 
 ## The idea
 
-A plain frequency miner can only find patterns it can express as a rule — token
-counts, numeric ranges, skeletons. It's structurally blind to *semantic* and
-*thematic* conventions: hosts named after a mythology, internal codenames, a
-deprecated `payments-v1` implied by `payments-v2`. That's the gap an LLM fills.
+Three generators, each good at something different:
 
-But an LLM is the wrong tool for *bulk enumeration* — output is capped (~128k
-tokens ≈ ~10k names per call) and expensive. So the work is split:
-
-```
-known subdomains
-      │
-      ▼
-  DISCOVER  (LLM — Opus 4.8, adaptive thinking)   ← all the intelligence
-      │  returns compact JSON themes, each typed:
-      │    • enumerate : a finite, knowledge-driven set (the model lists members)
-      │    • template  : a combinatorial spec  {name}{n}.example.com + slot defs
-      ▼
-  PREVIEW cardinality  (multiply slot sizes — instant, no expansion)
-      ▼
-  EXPAND  (pure Python)   ← zero intelligence, just a printer
-      │  range/enum product, ranked, capped, deduped against the input
-      ▼
-  candidates.txt   +   patterns.json
-```
-
-The LLM decides *what* the patterns are and *which* values fill each slot. Code
-only multiplies them out. A template like `{name}{n}.example.com` is ~150 bytes
-but expands to thousands of names — so the model's limited output budget goes to
-finding *more themes*, never to typing repetitive strings. That's how you reach
-millions of candidates without millions of output tokens.
-
-## Two engines: code miner + LLM
-
-There are two ways to get the themes, with different strengths — use either, or
-both:
-
-| | **Code miner** (`--mine`) | **LLM** (default / discovery) |
+| Generator | What it does | Needs |
 |---|---|---|
-| Catches | structural / combinatorial templates (`{site}-ads-{n}`, `{service}.{env}`) | semantic / thematic patterns (codenames, `west`→`east`, team brands) |
-| Coverage | **exhaustive** — provably every host | surfaces what it notices (can miss) |
-| Reproducible | yes, deterministic | no, varies per run |
-| Scale | any size (7M+), streaming | bounded by context window |
-| Cost | **$0**, no API | scales with input size |
+| **mine** | Learn structural templates from your hosts and recombine the values you have (cross-fill, numeric ranges). | code, offline, free |
+| **fuzz** | Mutate each host — separators, plurals, affixes, typed-slot swaps (`dev`→`qa/prod`), dictionary-word FUZZ. | code, offline, free |
+| **AI** | Fill mined slots with real-world values you *don't* have (`memphis, austin` → all 30 teams), discover latent slots, and propose net-new names. | LLM (OpenAI or Ollama) |
 
-The miner tokenizes every host (on `.`, `-`, and letter/digit boundaries), finds
-positions whose value-set *recurs across contexts*, and emits templates with real
-enum value-sets and numeric `min/max` — all from 100% of the data, for free. It
-**cannot** do semantics (a glued one-off like `raptorsuprising`, or inferring
-`redirect-east` from a lone `redirect-west`); that's the LLM's job.
-
-The best of both is **`--hybrid`**: the miner explains the structural bulk, then
-the LLM runs on **only the residual** — the hosts no template covers. On a
-systematic infra target the templates absorb the millions and the LLM sees a tiny
-fraction, so you get full coverage at minimal LLM cost.
+The split matters: an LLM is great at *knowledge* but a bad, expensive bulk
+enumerator. So the model only emits compact things — slot values, a few template
+specs — and **code multiplies them out**. A template like `{team}.dleague.example.com`
+is tiny but expands to dozens of hosts.
 
 ```
-all hosts ─▶ MINE (code, free) ─▶ RESIDUAL (uncovered one-offs) ─▶ LLM ─▶ combine ─▶ expand
+known subs ─▶ mine (code) ─┐
+             fuzz (code) ──┤─▶ merge + dedup ─▶ candidates
+             AI enrich/propose (optional) ─┘
 ```
 
 ## Install
 
 ```bash
-cd subpattern
-python -m venv .venv && .venv/Scripts/activate   # Windows
-pip install -e .
-export ANTHROPIC_API_KEY=sk-ant-...               # or set in your shell / .env
+pip install -e .                      # from a clone
+# or, straight from GitHub:
+pipx install git+https://github.com/Raymond-JV/subseer
+```
+
+Only needed for the AI layer:
+
+```bash
+export OPENAI_API_KEY=sk-...          # for --gpt
+# --ollama just needs a local `ollama serve`
 ```
 
 ## Use
 
 ```bash
-# Discover + expand
-subpattern examples/sample_subdomains.txt
+# Offline, free — mine + fuzz:
+subseer subs.txt
 
-# Just see the conventions and how many candidates each implies — no expansion, no spend on output
-subpattern examples/sample_subdomains.txt --dry-run
+# Add AI (OpenAI gpt-4o-mini): enrich mined slots + discover + propose:
+subseer subs.txt --gpt
 
-# Thorough run: 3 deepening discovery passes + a critic pass to drop invented themes
-subpattern examples/sample_subdomains.txt --runs 3 --critic
+# AI via a local model (offline, private):
+subseer subs.txt --ollama            # bare = qwen2.5
 
-# Caps and model
-subpattern big_target.txt --model claude-opus-4-8 --max-candidates 100000 --per-theme-cap 20000
+# Just mining, enriched by the model:
+subseer subs.txt --mine --gpt
+
+# Stream straight into your resolver (results to stdout, logs to stderr):
+subseer subs.txt --gpt --out - | dnsx | httpx -sc
 ```
 
-### Discovery modes
+`subseer --help` groups every flag under the generator it belongs to.
 
-```bash
-# Code miner only — exhaustive structural templates, $0, no API:
-subpattern target.txt --mine
+## Generators
 
-# Hybrid — mine structure, then LLM only on the residual one-offs (best coverage/cost):
-subpattern target.txt --hybrid --model claude-sonnet-4-6
+- **`--mine`** — tokenizes each host (on `.`, `-`, and letter/digit boundaries),
+  finds positions whose value-set recurs across contexts, and emits templates with
+  observed enum values and numeric ranges. Cross-fills combinations you haven't
+  deployed. Exhaustive, deterministic, free. PSL-aware apex detection (handles
+  `.co.uk`, `.com.mx`, …).
+- **`--fuzz`** — per-host mutations: separator swaps, pluralize, affix strip, typed
+  closed-vocab swaps, and dictionary-word `FUZZ`. Used **alone**, it *streams* the
+  full expansion to `--out` (any wordlist size, no memory blowup):
+  ```bash
+  subseer subs.txt --fuzz --wordlist /usr/share/seclists/.../raft-medium.txt --out - | dnsx
+  ```
+- **`--propose`** — the model proposes net-new names templates can't produce (infra
+  it infers, target-specific brands, theme continuation). Needs a backend.
 
-# Mine, then a cheap LLM pass to name / rank / drop the detected templates:
-subpattern target.txt --mine --refine --model claude-sonnet-4-6
+With **no generator flag**, `subseer` runs **mine + fuzz** (and, if a backend is
+set, also enrich + propose) and merges everything into one deduped file.
 
-# Mine and just inspect the detected templates (no expansion, no API):
-subpattern target.txt --mine --dry-run
-```
+## AI backend
 
-| Flag | What it does | Cost |
+Pick one; a backend flag turns on the AI layer (enriches `--mine`, powers `--propose`):
+
+| Flag | Backend | Default model |
 |---|---|---|
-| `--mine` | Detect templates from the data in code — exhaustive, deterministic, scales to any size. Writes to `--patterns`. | **$0** |
-| `--min-values N` | Miner: min distinct values for a position to become a slot (default 3). Lower = more recall, more noise. | — |
-| `--hybrid` | Mine structure, then run LLM discovery on **only** the hosts no template covers. | residual-sized LLM call |
-| `--refine` | LLM pass over the detected templates: gives each a human name, ranks 1–5, drops noise. Reasons over ~100 templates, not the hosts — cheap. | ~+1 cheap call |
+| `--gpt [MODEL]` | OpenAI-compatible (reads `$OPENAI_API_KEY`) | `gpt-4o-mini` |
+| `--ollama [MODEL]` | local Ollama (`ollama serve`) | `qwen2.5` |
 
-### Develop for free (no API credits)
+`--api-base` points `--gpt` at any compatible endpoint (Groq, Together, vLLM,
+Ollama's `/v1`). gpt-4o-mini is the sweet spot: far cheaper than a frontier model,
+much stronger than a small local one.
 
-The discovery step just turns subdomains into a themes JSON — you don't have to
-buy that JSON from the paid API while building. Two flags let you run the whole
-pipeline for $0:
+**Enrich** runs the mined templates once (batched) and then does Monte-Carlo
+**discovery** passes over the residual one-offs. **Propose** samples your list for
+context. Both merge across `--ai-runs` calls.
 
-```bash
-# 1. Run everything offline from a themes file (no API call, no cost):
-subpattern examples/sample_subdomains.txt --themes examples/sample_patterns.json
+## Auto-tuning
 
-# 2. To produce your own themes file for free, print the prompt and paste it into
-#    claude.ai (covered by a Pro plan), then save the JSON it returns:
-subpattern your_target.txt --print-prompt
-#    ... paste output into claude.ai, save its JSON as themes.json, then:
-subpattern your_target.txt --themes themes.json
-```
+Three knobs default to `auto` and scale with your list size — you rarely set them:
 
-`--themes` accepts either a `patterns.json` this tool wrote or a
-`{"themes": [...]}` blob from a chat model. Note: the Anthropic SDK can't bill a
-Claude Pro subscription — Pro and API credits are separate — so this prompt-and-paste
-flow is the way to use your Pro plan during development. When you're done, drop the
-flags and let it call the API live; no code changes.
-
-### Quality flags
-
-| Flag | What it does | Cost |
-|---|---|---|
-| `--runs N` | N **deepening** discovery passes. Each pass after the first is told which themes were already found and hunts for what they overshadow, then all are merged. Beats single-pass non-determinism. 2–3 is a good range. | +N−1 discovery calls |
-| `--critic` | After discovery, a skeptical pass drops themes whose cited evidence doesn't actually support the rule (plus a free code check that drops themes citing subdomains absent from your input). | +1 call |
-
-Outputs:
-- `candidates.txt` — new subdomains, ranked, deduped against your input.
-- `patterns.json` — every theme the model found, with evidence + computed cardinality.
-  Read this first; it's also where you'll catch any convention the model invented.
-
-## How scale is handled
-
-| Input size | Behavior |
+| Flag | `auto` behavior |
 |---|---|
-| ≤ `--chunk-size` (default 20k) | One discovery call over the whole file. |
-| larger | **Map-reduce**: split into chunks, discover each, merge themes. Guarantees every subdomain is actually reasoned over rather than buried in one oversized context. |
+| `--sample` | subs sent to the model as context (~2k, more for huge lists) |
+| `--ai-runs` | model calls merged (more for bigger lists / residuals) |
+| `--min-values` | miner's slot threshold (stricter on huge lists to cut noise) |
 
-A 237 KB file (~10k subdomains, ~80k tokens) is a single call. A genuine 100k+
-list (several MB) is chunked automatically.
+## Output
 
-## Theme spec
+- `--out PATH` — candidates (default `candidates.txt`); `--out -` streams to stdout
+  with logs on stderr, so it pipes cleanly into `dnsx`/`httpx`.
+- `--patterns PATH` — opt-in: also write the discovered themes as JSON (for
+  inspection, `--themes` reuse, or feeding a permutation tool like gotator's `-perm`).
+- `--themes PATH` — expand a saved themes JSON to candidates with no model call.
+- `--per-theme-cap` / `--max-candidates` — caps (0 = unlimited).
+- `--dry-run` — preview template cardinalities, write nothing.
 
-```json
-{
-  "name": "numbered web hosts",
-  "kind": "template",
-  "template": "{name}{n}.example.com",
-  "slots": [
-    {"name": "name", "kind": "enum",  "values": ["web", "node", "app"]},
-    {"name": "n",    "kind": "range", "min": 1, "max": 1000, "pad": 2}
-  ],
-  "evidence": ["web01.example.com", "node02.example.com"],
-  "cardinality": 3000
-}
-```
+## Suggested pipeline
 
-`enumerate` themes carry a `candidates` list instead of `template`/`slots`.
-
-## Model choice
-
-Discovery is *creative inference about a target* (spotting themes, extrapolating
-siblings), which is where the top tier earns its premium — default is
-`claude-opus-4-8`. Swap with `--model` (`claude-fable-5` for the strongest pattern
-intuition, `claude-sonnet-4-6` if you want lower cost and a `temperature` dial for
-variance across re-runs).
-
-## Tests (no API key needed)
-
-All core logic is covered by stdlib-only tests — the miner, expander, residual
-matching, review/refine filtering, and cost math:
+Generation is cheap; resolution is where you spend time — so DNS-filter before you
+HTTP-probe:
 
 ```bash
-python tests/test_mine.py      # tokenizer, pattern detection, residual matching
-python tests/test_expand.py    # cardinality + template expansion
-python tests/test_review.py    # critic filter, multi-run merge, refine apply
-python tests/test_pricing.py   # cost math
-# or, if installed:  pytest
+subseer subs.txt --gpt --out candidates.txt
+dnsx  -l candidates.txt -o resolved.txt          # keep only hosts that exist
+httpx -l resolved.txt -sc -title -rl 10          # probe the survivors, politely
 ```
 
-## Notes / future work
+## Tests
 
-- The miner can't split **glued** compound tokens (`bucksgaming` → `bucks`+`gaming`)
-  — those need dictionary-based word segmentation. They fall to the residual / LLM.
-- **Known-vocabulary expansion** would let a single observed value imply its set
-  (one `-west` → `-east/-north/-south`; a partial env list → the full one).
-- **DNS validation** is the biggest missing piece: resolve the candidates (with
-  wildcard filtering) and feed hits back to re-mine — turning a wordlist generator
-  into a discovery tool.
-- This is dual-use recon tooling. Only run it against targets you're authorized to test.
+Stdlib-only, no API key or network needed (the OpenAI path is stubbed):
+
+```bash
+for t in tests/test_*.py; do python "$t"; done   # or: pytest
 ```
+
+## Note
+
+Dual-use recon tooling. Only run it against targets you're authorized to test, and
+respect each program's scope and rate limits.
