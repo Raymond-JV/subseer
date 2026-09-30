@@ -218,6 +218,8 @@ def _run_fuzz_standalone(args, subs, src) -> int:
 
 def main(argv=None) -> int:
     global _REAL_STDOUT
+    from . import banner
+    banner.show()  # colored pixel seer on stderr when it's a TTY; skipped when piped
     args = parse_args(argv)
 
     # `--out -` streams results to stdout; reroute logs to stderr by swapping stdout.

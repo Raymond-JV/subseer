@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/seer.svg" alt="subseer" width="280">
+</p>
+
 # subseer
 
 Generate candidate subdomains from the ones you already know. Feed `subseer` a
