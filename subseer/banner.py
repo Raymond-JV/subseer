@@ -150,7 +150,7 @@ def show(stream=None) -> None:
     """Print the full pixel seer to ``stream`` (default stderr) on a color TTY.
 
     Used for the welcome screen (bare `subseer`). Skips when piped/redirected,
-    NO_COLOR is set, or TERM=dumb -- so it never pollutes `-o -` pipes or logs.
+    NO_COLOR is set, or TERM=dumb -- so it never pollutes piped results or logs.
     """
     stream = stream or sys.stderr
     if not (_is_tty(stream) and _color_ok()):

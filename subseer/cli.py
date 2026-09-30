@@ -37,12 +37,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     # --- --fuzz ------------------------------------------------------------
     f = p.add_argument_group("--fuzz (offline per-host fuzzing)",
                              "Mutate each host into candidate hostnames. Alone, streams the "
-                             "full expansion to -o (any wordlist size, no memory blowup).")
+                             "full expansion as it goes (any wordlist size, no memory blowup).")
     f.add_argument("--fuzz", action="store_true",
                    help="Per-host fuzz generator (offline): mutations, typed-slot fills, "
                    "and FUZZ filled from --wordlist.")
     f.add_argument("--wordlist", metavar="PATH",
-                   help="Word list to fill FUZZ and aid segmentation (e.g. a SecLists file).")
+                   help="DNS word list to fill FUZZ and aid segmentation. Default: the bundled "
+                   "SecLists top-20000 list (override with $SUBSEER_WORDLIST).")
 
     # --- --predict ---------------------------------------------------------
     pr = p.add_argument_group("--predict (LLM net-new names)",
@@ -70,8 +71,9 @@ def parse_args(argv=None) -> argparse.Namespace:
 
     # --- output ------------------------------------------------------------
     o = p.add_argument_group("output")
-    o.add_argument("-o", "--out", metavar="PATH", default="candidates.txt",
-                   help="Where to write candidates ('-' = stdout; logs go to stderr).")
+    o.add_argument("-o", "--out", metavar="PATH", default="-",
+                   help="Save candidates to a file (default: print to stdout, "
+                   "with progress on stderr so it pipes cleanly).")
     o.add_argument("--limit", metavar="N", type=int, default=200000,
                    help="Max candidates to write (0 = unlimited).")
     return p.parse_args(argv)
@@ -85,8 +87,8 @@ def _cap(value: int) -> int | None:
     return None if value == 0 else value
 
 
-# Real stdout, captured before any `--out -` redirect so results still reach the
-# pipe while logs go to stderr.
+# Real stdout, captured before logs are rerouted to stderr so results still reach
+# the pipe (results go to stdout unless -o names a file).
 _REAL_STDOUT = sys.stdout
 
 
@@ -184,19 +186,64 @@ def _out_desc(path: str) -> str:
     return "stdout" if path == "-" else str(Path(path).resolve())
 
 
+def _out_name(path: str) -> str:
+    """How progress messages name the output destination."""
+    return "stdout" if path == "-" else path
+
+
+# Bundled default DNS wordlist (SecLists top-20000, MIT; see subseer/data/README.md).
+_BUNDLED_WORDLIST = "subdomains-top20000.txt"
+
+
+def _resolve_words(args, log):
+    """Return the fuzz/segmentation word set: the built-in tokens plus a DNS list.
+
+    The DNS list is ``--wordlist`` if given, else ``$SUBSEER_WORDLIST`` if it points
+    at a real file, else the bundled SecLists top-20000 list. Prints and logs the
+    source. Falls back to just the built-in tokens only if the bundle is missing.
+    """
+    import importlib.resources as ir
+
+    from .fuzz import WORDS, load_wordlist
+
+    if args.wordlist and not Path(args.wordlist).is_file():
+        print(f"--wordlist: file not found: {args.wordlist}", file=sys.stderr)
+        raise SystemExit(2)
+    env = os.environ.get("SUBSEER_WORDLIST")
+    path = args.wordlist or (env if env and Path(env).is_file() else None)
+    if path:
+        extra = load_wordlist(path)
+        source = "custom" if args.wordlist else "env"
+        print(f"Wordlist: {path} -- {len(extra):,} words + {len(WORDS)} built-in.")
+        log.set(wordlist={"path": str(Path(path).resolve()), "words": len(extra), "source": source})
+        return WORDS | extra
+    try:
+        res = ir.files("subseer").joinpath("data", _BUNDLED_WORDLIST)
+        with ir.as_file(res) as p:
+            extra = load_wordlist(str(p))
+        print(f"Wordlist: bundled {_BUNDLED_WORDLIST} -- {len(extra):,} words + "
+              f"{len(WORDS)} built-in (override with --wordlist or $SUBSEER_WORDLIST).")
+        log.set(wordlist={"path": f"bundled:{_BUNDLED_WORDLIST}", "words": len(extra),
+                          "source": "bundled"})
+        return WORDS | extra
+    except Exception as e:  # bundle missing/unreadable: still usable, just smaller
+        print(f"Note: bundled wordlist unavailable ({e}); using the built-in "
+              f"{len(WORDS)}-word list.")
+        log.set(wordlist=None)
+        return WORDS
+
+
 def _run_fuzz_standalone(args, subs, src, log) -> int:
-    """`--fuzz` alone: STREAM the full expansion to --out.
+    """`--fuzz` alone: STREAM the full expansion to stdout or the -o file.
 
     Generates per-host mutations + typed-slot fills + FUZZ-from-wordlist and writes
     each host as it goes, so any wordlist size works without a memory blowup.
     Streaming means no global dedup (whatever consumes it -- dnsx/httpx -- dedups).
     """
-    from .fuzz import WORDS, generate, iter_expand_templates, load_wordlist
+    from .fuzz import generate, iter_expand_templates
 
-    words = WORDS | (load_wordlist(args.wordlist) if args.wordlist else set())
     print(f"Loaded {len(subs):,} subdomain(s) from {src}")
-    if not args.wordlist:
-        print(f"Note: no --wordlist; filling FUZZ from the built-in {len(WORDS)}-word list.")
+    words = _resolve_words(args, log)
     fuzz_t, concrete = generate(subs, words=words)
     cap = _cap(args.limit)
     n = 0
@@ -211,7 +258,7 @@ def _run_fuzz_standalone(args, subs, src, log) -> int:
                 print(f"Hit --limit ({cap:,}); stopping.")
                 log.set(limit_hit=True)
                 break
-    print(f"Wrote {n:,} fuzz candidates to {args.out}")
+    print(f"Wrote {n:,} fuzz candidates to {_out_name(args.out)}")
     log.set(mode="fuzz-stream", generators=["fuzz"], counts={"fuzz": n},
             output={"path": _out_desc(args.out), "written": n})
     return 0
@@ -257,14 +304,14 @@ def main(argv=None) -> int:
             log.set(exit_code=rc)
             path = log.write()
             if path and not args.quiet:
-                print(f"Run log: {path}", file=sys.stderr)  # stderr: never pollutes -o -
+                print(f"Run log: {path}", file=sys.stderr)  # stderr: never pollutes the results
 
 
 def _run(args, version: str, log) -> int:
     global _REAL_STDOUT
     from . import banner
 
-    # `--out -` streams results to stdout; reroute logs to stderr by swapping stdout.
+    # Results on stdout (the default) -> reroute progress logs to stderr.
     _REAL_STDOUT = sys.stdout
     if args.out == "-":
         sys.stdout = sys.stderr
@@ -301,8 +348,7 @@ def _run(args, version: str, log) -> int:
 
     args.min_values = _resolve_auto(args.min_values, len(subs), _auto_min_values, "min-values")
     args.sample = _resolve_auto(args.sample, len(subs), _auto_sample, "sample")
-    log.set(settings={"limit": args.limit, "min_values": args.min_values, "sample": args.sample,
-                      "wordlist": args.wordlist})
+    log.set(settings={"limit": args.limit, "min_values": args.min_values, "sample": args.sample})
     known = {s.strip().lower() for s in subs if s.strip()}
 
     # Standalone: --fuzz alone streams the full expansion.
@@ -353,9 +399,9 @@ def _run(args, version: str, log) -> int:
         candidates.update(dict.fromkeys(mined))
 
     if run_fuzz:
-        from .fuzz import WORDS, expand_templates, generate, load_wordlist
+        from .fuzz import expand_templates, generate
 
-        words = WORDS | (load_wordlist(args.wordlist) if args.wordlist else set())
+        words = _resolve_words(args, log)
         fuzz_t, fuzz_cand = generate(subs, words=words)
         typed = expand_templates(fuzz_t, words, include_fuzz=False)  # bounded (no FUZZxwordlist)
         candidates.update(dict.fromkeys(sorted(fuzz_cand) + sorted(typed)))  # stable for --limit
@@ -388,7 +434,7 @@ def _run(args, version: str, log) -> int:
     out.sort()
     with _out_stream(args.out) as f:
         f.write("\n".join(out) + "\n")
-    print(f"\nWrote {len(out):,} candidates to {args.out}")
+    print(f"\nWrote {len(out):,} candidates to {_out_name(args.out)}")
     log.set(output={"path": _out_desc(args.out), "written": len(out)})
     return 0
 

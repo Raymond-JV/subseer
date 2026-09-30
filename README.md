@@ -50,8 +50,11 @@ export OPENAI_API_KEY=sk-...          # for --gpt
 ## Use
 
 ```bash
-# Offline, free — mine + fuzz:
+# Offline, free — mine + fuzz (candidates print to stdout):
 subseer subs.txt
+
+# Save to a file instead:
+subseer subs.txt -o candidates.txt
 
 # Add AI (OpenAI gpt-4o-mini): enrich mined slots + discover + predict:
 subseer subs.txt --gpt
@@ -62,8 +65,8 @@ subseer subs.txt --ollama            # bare = qwen2.5
 # Just mining, enriched by the model:
 subseer subs.txt --mine --gpt
 
-# Stream straight into your resolver (results to stdout, logs to stderr):
-subseer subs.txt --gpt -o - | dnsx | httpx -sc
+# Pipe straight into your resolver (progress goes to stderr, so the pipe stays clean):
+subseer subs.txt --gpt | dnsx | httpx -sc
 ```
 
 `subseer --help` groups every flag under the generator it belongs to.
@@ -77,15 +80,27 @@ subseer subs.txt --gpt -o - | dnsx | httpx -sc
   `.co.uk`, `.com.mx`, …).
 - **`--fuzz`** — per-host mutations: separator swaps, pluralize, affix strip, typed
   closed-vocab swaps, and dictionary-word `FUZZ`. Used **alone**, it *streams* the
-  full expansion to `-o` (any wordlist size, no memory blowup):
+  full expansion as it goes (any wordlist size, no memory blowup):
   ```bash
-  subseer subs.txt --fuzz --wordlist /usr/share/seclists/.../raft-medium.txt -o - | dnsx
+  subseer subs.txt --fuzz --wordlist /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt | dnsx
   ```
 - **`--predict`** — the model predicts net-new names templates can't produce (infra
   it infers, target-specific brands, theme continuation). Needs a backend.
 
 With **no generator flag**, `subseer` runs **mine + fuzz** (and, if a backend is
 set, also enrich + predict) and merges everything into one deduped file.
+
+## Wordlists
+
+`--fuzz` fills the `FUZZ` token (and segments hostnames) from a DNS word list. Use a
+**DNS/subdomain** list, not a web-content/directory list — the latter is full of paths
+like `wp-admin` and `backup.zip` that make poor hostnames.
+
+subseer **bundles** a 20,000-entry DNS list (SecLists `subdomains-top1million-20000`,
+MIT — see [subseer/data/README.md](subseer/data/README.md)) and uses it by default, so
+`--fuzz` works out of the box with no setup. Override it by pointing `$SUBSEER_WORDLIST`
+at any file, or passing `--wordlist`. Bigger lists (`…-110000.txt`, `dns-Jhaddix.txt`)
+trade coverage for volume.
 
 ## AI backend
 
@@ -116,8 +131,9 @@ Three knobs default to `auto` and scale with your list size — you rarely set t
 
 ## Output
 
-- `-o` / `--out PATH` — candidates (default `candidates.txt`); `-o -` streams to stdout
-  with logs on stderr, so it pipes cleanly into `dnsx`/`httpx`.
+- Candidates print to **stdout** by default, with progress on stderr, so subseer pipes
+  cleanly into `dnsx`/`httpx` like the other recon tools.
+- `-o` / `--out PATH` — save candidates to a file instead.
 - `--limit N` — max candidates to write (default 200,000; `0` = unlimited). Each
   template is also capped at 50,000 so one huge template can't crowd out the rest.
 - `-q` / `--quiet` — results and errors only (no banner line, no progress logs).

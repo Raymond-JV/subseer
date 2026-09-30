@@ -102,6 +102,54 @@ def test_quiet_run_writes_results_but_no_logs():
             assert f.read().strip()
 
 
+def test_wordlist_env_override_is_used_and_logged():
+    with tempfile.TemporaryDirectory() as d:
+        wl = os.path.join(d, "dns.txt")
+        with open(wl, "w", encoding="utf-8") as f:
+            f.write("vpn\ngateway\ninternal\n")
+        before = set(_logs())
+        old = os.environ.get("SUBSEER_WORDLIST")
+        os.environ["SUBSEER_WORDLIST"] = wl
+        try:
+            code, _, err = _capture(main, ["-d", "api.dev.example.com", "--fuzz"])
+        finally:
+            if old is None:
+                os.environ.pop("SUBSEER_WORDLIST")
+            else:
+                os.environ["SUBSEER_WORDLIST"] = old
+        assert code == 0 and wl in err
+    (new,) = [p for p in _logs() if p not in before]
+    with open(new, encoding="utf-8") as f:
+        rec = json.load(f)
+    assert rec["wordlist"]["source"] == "env" and rec["wordlist"]["words"] == 3
+
+
+def test_default_uses_the_bundled_wordlist():
+    before = set(_logs())
+    old = os.environ.get("SUBSEER_WORDLIST")
+    os.environ["SUBSEER_WORDLIST"] = os.path.join(tempfile.gettempdir(), "does-not-exist-xyz.txt")
+    try:
+        code, _, err = _capture(main, ["-d", "api.dev.example.com", "--fuzz"])
+    finally:
+        if old is None:
+            os.environ.pop("SUBSEER_WORDLIST")
+        else:
+            os.environ["SUBSEER_WORDLIST"] = old
+    assert code == 0 and "bundled" in err
+    (new,) = [p for p in _logs() if p not in before]
+    with open(new, encoding="utf-8") as f:
+        rec = json.load(f)
+    assert rec["wordlist"]["source"] == "bundled" and rec["wordlist"]["words"] > 15000
+
+
+def test_results_go_to_stdout_by_default_and_progress_to_stderr():
+    code, out, err = _capture(main, ["-d", "api.dev.example.com"])
+    assert code == 0
+    lines = [l for l in out.splitlines() if l]
+    assert lines and all(" " not in l and "." in l for l in lines)  # hostnames only
+    assert "Loaded" in err and "Wrote" in err
+
+
 def test_limit_caps_the_written_output():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "out.txt")
