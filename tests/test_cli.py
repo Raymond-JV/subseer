@@ -18,11 +18,13 @@ os.environ["SUBSEER_LOG_DIR"] = _LOG_DIR
 
 from subseer import __version__, banner
 from subseer.cli import (
+    _api_base,
     _auto_min_values,
     _auto_runs,
     _auto_sample,
     _resolve_auto,
     main,
+    parse_args,
 )
 
 
@@ -56,6 +58,14 @@ def test_resolve_auto_int_passthrough():
 def test_resolve_auto_keyword():
     assert _resolve_auto("auto", 4000, _auto_runs, "local-runs") == 5
     assert _resolve_auto("AUTO", 12000, _auto_min_values, "min-values") == 4
+
+
+def test_api_base_defaults_per_backend_and_overrides():
+    args = parse_args(["-d", "x.example.com"])
+    assert _api_base("gpt", args) == "https://api.openai.com/v1"
+    assert _api_base("ollama", args) == "http://localhost:11434"
+    args = parse_args(["-d", "x.example.com", "--api-base", "http://box:11434"])
+    assert _api_base("ollama", args) == "http://box:11434"
 
 
 def test_resolve_auto_invalid_exits():
@@ -122,6 +132,15 @@ def test_wordlist_env_override_is_used_and_logged():
     with open(new, encoding="utf-8") as f:
         rec = json.load(f)
     assert rec["wordlist"]["source"] == "env" and rec["wordlist"]["words"] == 3
+
+
+def test_short_w_flag_sets_the_wordlist():
+    with tempfile.TemporaryDirectory() as d:
+        wl = os.path.join(d, "dns.txt")
+        with open(wl, "w", encoding="utf-8") as f:
+            f.write("vpn\ngateway\n")
+        code, _, err = _capture(main, ["-d", "api.dev.example.com", "--fuzz", "-w", wl])
+    assert code == 0 and wl in err
 
 
 def test_default_uses_the_bundled_wordlist():

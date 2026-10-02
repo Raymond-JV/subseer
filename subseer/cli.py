@@ -14,9 +14,8 @@ from .pipeline import expand_themes, load_subdomains, theme_to_dict
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="subseer",
-        description="Generate candidate subdomains from a known list. By default runs "
-        "the offline generators (mine + fuzz). Add --gpt or --ollama to also expand "
-        "patterns with an LLM.",
+        description="Generate new subdomains from the ones you already know. Runs "
+        "offline by default (Mine + Fuzz); add --gpt or --ollama to use an LLM.",
     )
     p.add_argument("input", nargs="?", help="File of subdomains, one per line. Omit if using -d.")
     p.add_argument("-d", "--domain", help="A single domain instead of an input file.")
@@ -41,7 +40,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     f.add_argument("--fuzz", action="store_true",
                    help="Per-host fuzz generator (offline): mutations, typed-slot fills, "
                    "and FUZZ filled from --wordlist.")
-    f.add_argument("--wordlist", metavar="PATH",
+    f.add_argument("-w", "--wordlist", metavar="PATH",
                    help="DNS word list to fill FUZZ and aid segmentation. Default: the bundled "
                    "SecLists top-20000 list (override with $SUBSEER_WORDLIST).")
 
@@ -60,10 +59,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="Use OpenAI (bare = gpt-4o-mini; or --gpt gpt-4o). Reads $OPENAI_API_KEY.")
     ai.add_argument("--ollama", nargs="?", const="qwen2.5", default=None, metavar="MODEL",
                     help="Use a local Ollama model (bare = qwen2.5). Needs `ollama serve`.")
-    ai.add_argument("--api-base", metavar="URL", default="https://api.openai.com/v1",
-                    help="Endpoint for --gpt (OpenAI, Groq, Together, vLLM, ...).")
-    ai.add_argument("--ollama-url", metavar="URL", default="http://localhost:11434",
-                    help="Ollama server URL.")
+    ai.add_argument("--api-base", metavar="URL", default=None,
+                    help="LLM endpoint (default: OpenAI for --gpt, localhost:11434 for "
+                    "--ollama). Any OpenAI-compatible URL works with --gpt.")
     ai.add_argument("--sample", metavar="N", default="auto",
                     help="Max subs sent to the model as context (int or 'auto').")
     ai.add_argument("--ai-runs", default="auto", metavar="N",
@@ -149,6 +147,14 @@ def _resolve_auto(value, n: int, auto_fn, label: str) -> int:
         raise SystemExit(2)
 
 
+_DEFAULT_API_BASE = {"gpt": "https://api.openai.com/v1", "ollama": "http://localhost:11434"}
+
+
+def _api_base(kind, args):
+    """--api-base if given, else the selected backend's default endpoint."""
+    return args.api_base or _DEFAULT_API_BASE[kind]
+
+
 def _predict(subs, covered, backend, args, runs, prog):
     """Dispatch a --predict run to the selected backend."""
     kind, model = backend
@@ -157,11 +163,11 @@ def _predict(subs, covered, backend, args, runs, prog):
     if kind == "gpt":
         return run_propose_openai(
             subs, model=model, count=args.predict_count, sample=args.sample,
-            covered_templates=covered, base_url=args.api_base, runs=runs, progress=prog,
+            covered_templates=covered, base_url=_api_base(kind, args), runs=runs, progress=prog,
         )
     return run_propose_local(
         subs, model=model, count=args.predict_count, sample=args.sample,
-        covered_templates=covered, url=args.ollama_url, runs=runs, progress=prog,
+        covered_templates=covered, url=_api_base(kind, args), runs=runs, progress=prog,
     )
 
 
@@ -173,11 +179,11 @@ def _enrich(mined, subs, residual, backend, args, runs, prog):
     if kind == "gpt":
         return run_enrich_openai(
             mined, subs, residual=residual, model=model, sample=args.sample,
-            base_url=args.api_base, runs=runs, progress=prog,
+            base_url=_api_base(kind, args), runs=runs, progress=prog,
         )
     return run_enrich_local(
         mined, subs, residual=residual, model=model, sample=args.sample,
-        url=args.ollama_url, runs=runs, progress=prog,
+        url=_api_base(kind, args), runs=runs, progress=prog,
     )
 
 
