@@ -163,17 +163,27 @@ def test_system_prompts_load_from_text_files_without_comments():
         assert shape in prompt  # the reply shape the parsers expect is spelled out
 
 
-def test_the_reply_example_in_the_enrich_prompt_parses():
-    # The JSON example in prompts/enrich.txt must be a reply subseer accepts in full.
+def test_the_reply_examples_in_the_enrich_prompt_parse():
+    # Both JSON examples in prompts/enrich.txt must be replies subseer accepts in full.
     from subseer.enrich import SYSTEM_PROMPT, _enrich_batched
 
-    example = next(l for l in SYSTEM_PROMPT.splitlines() if l.startswith('{"themes"'))
-    themes = _enrich_batched([], ["api-dev.example.com"], "example.com", ["api-dev.example.com"],
-                             2000, lambda user, seed: _parse_enrichment(example), 1, None,
-                             None, 25)
-    (t,) = themes
+    job_b, job_a = [l for l in SYSTEM_PROMPT.splitlines() if l.startswith('{"themes"')]
+
+    def run(example, mined):
+        return _enrich_batched(mined, ["api-dev.example.com"], "example.com",
+                               ["api-dev.example.com"], 2000,
+                               lambda user, seed: _parse_enrichment(example), 1, None, None, 25)
+
+    (t,) = run(job_b, [])
     assert t.template == "api-{s1}.example.com" and t.evidence == ["api-dev.example.com"]
     assert t.slots[0].label == "env" and "staging" in t.slots[0].values
+
+    mined = _theme("{s1}.{s2}.example.com",
+                   [Slot(name="s1", kind="enum", values=["api", "web"]),
+                    Slot(name="s2", kind="enum", values=["dev", "prod"])])
+    (t,) = [x for x in run(job_a, [mined]) if x.template == "{s1}.{s2}.example.com"]
+    assert [s.values for s in t.slots] == [["api", "web"], ["dev", "prod", "staging", "qa", "uat"]]
+    assert enrichment_stats([mined], [t]) == {"enriched": 1, "discovered": 0, "new_values": 3}
 
 
 def test_each_enrich_call_only_shows_its_own_job():
@@ -183,6 +193,28 @@ def test_each_enrich_call_only_shows_its_own_job():
     job_b = build_enrich_prompt([], ["api-dev.example.com"], "example.com")
     assert "MINED TEMPLATES" in job_a and "RESIDUAL" not in job_a
     assert "RESIDUAL HOSTS" in job_b and "MINED" not in job_b
+
+
+def test_additions_merge_into_the_full_mined_lists_including_hidden_values():
+    # The prompt shows 40 of these 60 teams; the model only adds envs. The merged
+    # pattern must keep all 60 teams, so every team gets the new envs.
+    teams = [f"team{i}" for i in range(60)]
+    mined = _theme("{s1}.{s2}.example.com",
+                   [Slot(name="s1", kind="enum", values=teams),
+                    Slot(name="s2", kind="enum", values=["dev", "prod"])])
+    assert "(+20 more)" in build_enrich_prompt([mined], [], "example.com")
+    reply = [{"template": "{s1}.{s2}.example.com",
+              "slots": [{"name": "s2", "values": ["staging", "qa", "dev"], "label": "env"}]}]
+    (t,) = enrichment_to_themes(reply, "example.com", {mined.template: mined})
+    assert t.slots[0].values == teams                                  # untouched, all 60
+    assert t.slots[1].values == ["dev", "prod", "staging", "qa"]       # additions appended once
+    assert t.slots[1].label == "env"
+
+
+def test_a_reply_that_adds_nothing_to_a_mined_pattern_is_dropped():
+    mined = _theme("{s1}.example.com", [Slot(name="s1", kind="enum", values=["dev", "qa"])])
+    reply = [{"template": "{s1}.example.com", "slots": [{"name": "s1", "values": ["qa"]}]}]
+    assert enrichment_to_themes(reply, "example.com", {mined.template: mined}) == []
 
 
 def _run_all():

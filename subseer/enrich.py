@@ -110,8 +110,56 @@ def _slot_from_spec(name: str, values: list[str], label: str = "",
     return Slot(name=name, kind="enum", values=vals, label=label, meaning=meaning)
 
 
-def enrichment_to_themes(themes_data, apex: str, mined_templates: set[str]) -> list[Theme]:
-    """Convert model themes into expandable Theme objects; skip malformed ones."""
+def _add_to_mined(base: Theme, td) -> Theme | None:
+    """Mine's pattern with the model's ADDITIONS merged into its full slot lists.
+
+    Job A replies carry only new values (and may leave slots out), because the
+    prompt shows at most 40 values per slot - merging here keeps every value Mine
+    found, including ones the model never saw. None if nothing new was added.
+    """
+    specs = {}
+    for sp in _field(td, "slots", []) or []:
+        nm = (_field(sp, "name") or "").strip().lstrip("{").rstrip("}")
+        if nm:
+            specs[nm] = sp
+    slots, added = [], False
+    for slot in base.slots:
+        sp = specs.get(slot.name)
+        if sp is None:
+            slots.append(slot)
+            continue
+        new = _slot_from_spec(slot.name, _field(sp, "values", []) or [])
+        label = str(_field(sp, "label", "") or "").strip()[:40] or slot.label
+        meaning = str(_field(sp, "meaning", "") or "").strip()[:200] or slot.meaning
+        if slot.kind == "enum" and new is not None:
+            extra = [v for v in slot_values(new, cap=_MAX_VALS) if v not in set(slot.values)]
+            added = added or bool(extra)
+            values = (slot.values + extra)[:max(_MAX_VALS, len(slot.values))]
+            slots.append(slot.model_copy(update={"values": values, "label": label,
+                                                 "meaning": meaning}))
+        elif slot.kind == "range" and new is not None and new.kind == "range":
+            lo, hi = min(slot.min, new.min), max(slot.max, new.max)
+            added = added or (lo, hi) != (slot.min, slot.max)
+            slots.append(slot.model_copy(update={"min": lo, "max": hi, "label": label,
+                                                 "meaning": meaning}))
+        else:
+            slots.append(slot.model_copy(update={"label": label, "meaning": meaning}))
+    if not added:
+        return None
+    label = (_field(td, "label") or "").strip()
+    return base.model_copy(update={"name": label or base.name, "slots": slots,
+                                   "description": "Mined pattern, extended by the LLM."})
+
+
+def enrichment_to_themes(themes_data, apex: str, mined_templates) -> list[Theme]:
+    """Convert model themes into expandable Theme objects; skip malformed ones.
+
+    ``mined_templates`` maps template -> Mine's Theme (or is a plain set). For a
+    mined template the reply is additions only, merged into Mine's pattern; any
+    other template is a discovery and must cover every placeholder itself.
+    """
+    mined_by = mined_templates if isinstance(mined_templates, dict) else {}
+    mined_templates = set(mined_templates)
     suffix = "." + apex if apex else ""
     out: list[Theme] = []
     seen: set[str] = set()
@@ -121,6 +169,13 @@ def enrichment_to_themes(themes_data, apex: str, mined_templates: set[str]) -> l
             continue
         if suffix and not template.endswith(suffix):
             template = template + suffix
+        if template in mined_by:  # job A: additions to Mine's pattern
+            if template not in seen:
+                seen.add(template)
+                merged = _add_to_mined(mined_by[template], td)
+                if merged is not None:
+                    out.append(merged)
+            continue
         slots: list[Slot] = []
         for sp in _field(td, "slots", []) or []:
             nm = (_field(sp, "name") or "").strip().lstrip("{").rstrip("}")
@@ -373,6 +428,16 @@ def _merge_theme_data(dst: dict[str, dict], items: list[dict]) -> None:
                     dest.append(v)
 
 
+# Mined templates per job-A call (a big single call truncates into unparseable JSON).
+LOCAL_BATCH, OPENAI_BATCH = 6, 15
+
+
+def planned_calls(n_templates: int, n_residual: int, runs: int, batch_size: int) -> int:
+    """Model calls an enrich run makes: one per template batch, plus ``runs`` discovery
+    passes when there are residual hosts."""
+    return -(-n_templates // batch_size) + (max(1, runs) if n_residual else 0)
+
+
 def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
                     progress, batch_size) -> list[Theme]:
     """Shared enrich loop, with the two jobs decoupled by their run-count needs:
@@ -388,7 +453,7 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
     apex = apex if apex is not None else detect_apex(subs)
     residual = residual if residual is not None else []
     themes = list(themes)
-    mined = {t.template for t in themes}
+    mined = {t.template: t for t in themes}
 
     batches = [themes[i:i + batch_size] for i in range(0, len(themes), batch_size)]
     n_runs = max(1, runs)
@@ -446,7 +511,7 @@ def run_enrich_local(themes, subs, apex: str | None = None, residual=None,
                      model: str = "qwen2.5", sample: int = 150,
                      url: str = "http://localhost:11434", num_ctx: int | None = None,
                      runs: int = 1, seed: int | None = None, progress=None,
-                     batch_size: int = 6) -> list[Theme]:
+                     batch_size: int = LOCAL_BATCH) -> list[Theme]:
     """Enrich + discover slots via a local Ollama model - offline, free, private.
 
     Mined templates are enriched in small BATCHES (a local model returns nothing
@@ -467,7 +532,7 @@ def run_enrich_openai(themes, subs, apex: str | None = None, residual=None,
                       model: str = "gpt-4o-mini", sample: int = 150,
                       base_url: str | None = None, api_key: str | None = None,
                       runs: int = 1, seed: int | None = None, progress=None,
-                      batch_size: int = 15) -> list[Theme]:
+                      batch_size: int = OPENAI_BATCH) -> list[Theme]:
     """Enrich + discover slots via an OpenAI-compatible model (e.g. gpt-4o-mini).
 
     Batches like the local path (larger batches - a hosted model handles more per

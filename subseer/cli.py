@@ -305,6 +305,25 @@ def _enrich(mined, subs, residual, backend, args, runs, prog):
     )
 
 
+def _llm_record(theme, base, new_subdomains: int) -> dict:
+    """How the run log shows one LLM pattern: a discovered one in full; an extended
+    one as just the values the LLM added to each of Mine's slots."""
+    if base is None:
+        return dict(theme_to_dict(theme), source="discovered", new_subdomains=new_subdomains)
+    added, labels = {}, {}
+    for old, new in zip(base.slots, theme.slots):
+        if new.kind == "enum":
+            extra = [v for v in new.values if v not in set(old.values)]
+        else:
+            extra = [new.min, new.max] if (new.min, new.max) != (old.min, old.max) else []
+        if extra:
+            added[new.name] = extra
+        if new.label:
+            labels[new.name] = new.label
+    return {"template": theme.template, "source": "extended", "added": added,
+            "labels": labels, "new_subdomains": new_subdomains}
+
+
 def _out_desc(path: str) -> str:
     """How the run log records the output destination."""
     return "stdout" if path == "-" else str(Path(path).resolve())
@@ -519,15 +538,37 @@ def _run(args, version: str, log) -> int:
             runs = _ai_runs(args, len(residual))
             log.set(enrich={"runs": runs, "residual": len(residual),
                             "residual_sample": sorted(residual)[:_LOG_SAMPLE]})
-            _say("enrich", backend[1], _n(runs, "call"),
+            from .enrich import LOCAL_BATCH, OPENAI_BATCH, planned_calls
+
+            batch = OPENAI_BATCH if backend[0] == "gpt" else LOCAL_BATCH
+            calls = planned_calls(len(themes), len(residual), runs, batch)
+            _say("enrich", backend[1], _n(calls, "call"),
                  f"sample {args.sample}{' (auto)' if sample_auto else ''}")
             prog = lambda i, n, tot: n > 1 and _detail(f"call {i}/{n} done")
             enriched = _enrich(themes, subs, residual, backend, args, runs, prog)
             stats = enrichment_stats(themes, enriched, subs)
-            _detail(f"LLM found {_n(stats['discovered'], 'new pattern')}")
+            base = {t.template: t for t in themes}
+
+            def _names(t):
+                return set(expand_themes([t], known, _PER_TEMPLATE_CAP, None))
+
+            # Hostnames each LLM pattern adds beyond what you have and what Mine made.
+            yields = [len(_names(t) - (_names(base[t.template]) if t.template in base else set()))
+                      for t in enriched]
+            did = [f"found {_n(stats['discovered'], 'new pattern')}"]
+            if stats["enriched"]:
+                did.append(f"extended {_n(stats['enriched'], 'pattern')}")
+            found = "LLM " + " and ".join(did)
+            if enriched and not any(yields):
+                found += ", but it only gives subdomains you already have" if len(enriched) == 1 \
+                    else ", but they only give subdomains you already have"
+            _detail(found)
             log.set(enrichment=stats)
-            templates["llm"] = [theme_to_dict(t) for t in enriched]  # what the LLM added
-            themes = list(themes) + enriched
+            templates["llm"] = [_llm_record(t, base.get(t.template), y)  # what the LLM added
+                                for t, y in zip(enriched, yields)]
+            # An extended pattern replaces Mine's; discovered ones are added.
+            by_template = {t.template: t for t in enriched}
+            themes = [by_template.pop(t.template, t) for t in themes] + list(by_template.values())
             timings["enrich"] = round(time.monotonic() - t0, 2)
         mined = expand_themes(themes, known, _PER_TEMPLATE_CAP, _cap(args.limit))
         counts["mine"] = len(mined)

@@ -375,6 +375,59 @@ def test_readme_mine_example_fills_the_missing_grid_cells():
     assert out.split() == ["mail.dev.example.com", "web.prod.example.com"]
 
 
+def test_llm_pattern_that_only_relists_known_hosts_is_called_out():
+    from subseer import cli
+    from subseer.models import Slot, Theme
+
+    def fake_enrich(mined, subs, residual, backend, args, runs, prog):
+        return [Theme(name="t", description="d", evidence=[], kind="template",
+                      template="{s1}.example.com",
+                      slots=[Slot(name="s1", kind="enum", values=["www", "dev"])])]
+
+    real, cli._enrich = cli._enrich, fake_enrich
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            subs = os.path.join(d, "subs.txt")
+            with open(subs, "w", encoding="utf-8") as f:
+                f.write("www.example.com\ndev.example.com\n")
+            before = set(_logs())
+            _, out, err = _capture(main, [subs, "--mine", "--gpt", "--api-base", "http://llm"])
+    finally:
+        cli._enrich = real
+    assert out == "" and "only gives subdomains you already have" in err
+    (new,) = [l for l in _logs() if l not in before]
+    assert json.loads(new)["templates"]["llm"][0]["new_subdomains"] == 0
+
+
+def test_extended_pattern_replaces_mines_and_logs_only_the_additions():
+    from subseer import cli, enrich
+
+    def fake_enrich(mined, subs, residual, backend, args, runs, prog):
+        reply = [{"template": "{s1}.{s2}.example.com",
+                  "slots": [{"name": "s2", "values": ["staging"], "label": "env"}]}]
+        return enrich.enrichment_to_themes(reply, "example.com", {t.template: t for t in mined})
+
+    real, cli._enrich = cli._enrich, fake_enrich
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            subs = os.path.join(d, "subs.txt")
+            with open(subs, "w", encoding="utf-8") as f:
+                f.write("api.dev.example.com\nweb.dev.example.com\n"
+                        "api.prod.example.com\nmail.prod.example.com\n")
+            before = set(_logs())
+            _, out, err = _capture(main, [subs, "--mine", "--gpt", "--api-base", "http://llm"])
+    finally:
+        cli._enrich = real
+    assert sorted(out.split()) == sorted(
+        ["mail.dev.example.com", "web.prod.example.com", "api.staging.example.com",
+         "web.staging.example.com", "mail.staging.example.com"])
+    assert "LLM found 0 new patterns and extended 1 pattern" in err
+    (new,) = [l for l in _logs() if l not in before]
+    (rec,) = json.loads(new)["templates"]["llm"]
+    assert rec["source"] == "extended" and rec["added"] == {"s2": ["staging"]}
+    assert rec["new_subdomains"] == 3  # the staging names; Mine's own two don't count
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
