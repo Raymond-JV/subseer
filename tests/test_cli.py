@@ -231,7 +231,7 @@ def test_results_go_to_stdout_by_default_and_progress_to_stderr():
     assert code == 0
     lines = [l for l in out.splitlines() if l]
     assert lines and all(" " not in l and "." in l for l in lines)  # hostnames only
-    assert "input " in err and "output " in err
+    assert "input " in err and "found " in err
 
 
 def test_on_a_terminal_the_summary_follows_the_results():
@@ -247,7 +247,7 @@ def test_on_a_terminal_the_summary_follows_the_results():
         else:
             os.environ["NO_COLOR"] = old
     lines = screen.getvalue().splitlines()
-    assert lines[-1] == "output   2 new subdomains -> stdout"
+    assert lines[-1] == "found 2 subdomains"
     assert lines[-2] == ""  # blank line between the results and the summary
     assert all(l.endswith(".example.com") for l in lines[-4:-2])  # the 2 results
     assert lines[-5] == ""  # blank line between the step lines and the results

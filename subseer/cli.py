@@ -238,14 +238,19 @@ def _is_auto(value) -> bool:
     return str(value).strip().lower() == "auto"
 
 
-def _say(step: str, msg: str) -> None:
-    """One progress line: a short step name, then what happened, aligned."""
-    print(f"{step:<8} {msg}")
+_STEP_STYLE = {"found": term.GREEN, "limit": term.YELLOW}
+
+
+def _say(step: str, msg: str, *notes: str) -> None:
+    """One progress line: the step name (colored), what happened, then dim notes."""
+    label = term.paint(step, _STEP_STYLE.get(step, term.CYAN))
+    tail = "".join(term.paint(f" · {n}", term.GRAY) for n in notes if n)
+    print(f"{label} {msg}{tail}")
 
 
 def _detail(msg: str) -> None:
-    """A sub-line under the previous step."""
-    print(f"{'':<8} {msg}")
+    """A dim, indented sub-line under the previous step."""
+    print(f"  {term.paint(msg, term.GRAY)}")
 
 
 def _n(count: int, word: str) -> str:
@@ -298,11 +303,6 @@ def _out_desc(path: str) -> str:
     return "stdout" if path == "-" else str(Path(path).resolve())
 
 
-def _out_name(path: str) -> str:
-    """How progress messages name the output destination."""
-    return "stdout" if path == "-" else path
-
-
 # Bundled default DNS wordlist (SecLists top-20000, MIT; see subseer/data/README.md).
 _BUNDLED_WORDLIST = "subdomains-top20000.txt"
 
@@ -325,18 +325,18 @@ def _resolve_words(args, log):
         extra = load_wordlist(path)
         source = "custom" if args.wordlist else "env"
         log.set(wordlist={"path": str(Path(path).resolve()), "words": len(extra), "source": source})
-        return WORDS | extra, f"wordlist {path}, {_n(len(extra), 'word')}"
+        return WORDS | extra, f"{path} ({len(extra):,} words)"
     try:
         res = ir.files("subseer").joinpath("data", _BUNDLED_WORDLIST)
         with ir.as_file(res) as p:
             extra = load_wordlist(str(p))
         log.set(wordlist={"path": f"bundled:{_BUNDLED_WORDLIST}", "words": len(extra),
                           "source": "bundled"})
-        return WORDS | extra, f"bundled wordlist, {_n(len(extra), 'word')}"
+        return WORDS | extra, f"bundled wordlist ({len(extra):,} words)"
     except Exception as e:  # bundle missing/unreadable: still usable, just smaller
         term.warn(f"bundled wordlist unavailable ({e}); using the built-in words only")
         log.set(wordlist=None)
-        return WORDS, f"built-in words only, {_n(len(WORDS), 'word')}"
+        return WORDS, f"built-in words ({len(WORDS):,})"
 
 
 def _run_fuzz_standalone(args, subs, src, log) -> int:
@@ -348,9 +348,9 @@ def _run_fuzz_standalone(args, subs, src, log) -> int:
     """
     from .fuzz import generate, iter_expand_templates
 
-    _say("input", f"{_n(len(subs), 'subdomain')} from {src}")
+    _say("input", _n(len(subs), 'subdomain'), src)
     words, wl = _resolve_words(args, log)
-    _say("fuzz", f"streaming ({wl})")
+    _say("fuzz", "streaming", wl)
     fuzz_t, concrete = generate(subs, words=words)
     cap = _cap(args.limit)
     n = 0
@@ -371,8 +371,8 @@ def _run_fuzz_standalone(args, subs, src, log) -> int:
     if n and _results_on_screen(args):
         print()  # and between the results and the summary
     if hit_limit:
-        _say("limit", f"reached {cap:,}; stopped")
-    _say("output", f"{_n(n, 'new subdomain')} -> {_out_name(args.out)}")
+        _say("limit", f"reached {cap:,}, stopped")
+    _say("found", _n(n, 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
     log.set(mode="fuzz-stream", generators=["fuzz"], counts={"fuzz": n},
             output={"path": _out_desc(args.out), "written": n})
     return 0
@@ -480,7 +480,7 @@ def _run(args, version: str, log) -> int:
     run_fuzz = args.fuzz or not explicit
     run_predict = args.predict or (not explicit and backend is not None)
 
-    _say("input", f"{_n(len(subs), 'subdomain')} from {src}")
+    _say("input", _n(len(subs), 'subdomain'), src)
     from .mine import mine_themes
 
     # Insertion-ordered so --limit keeps mined (confidence-ranked) names first.
@@ -497,9 +497,9 @@ def _run(args, version: str, log) -> int:
         themes = mine_themes(subs, min_values=args.min_values, min_support=args.min_values)
         templates = {"mined": [theme_to_dict(t) for t in themes]}  # offline, before any LLM
         log.set(templates=templates)
-        mv = f"min-values {args.min_values}{', auto' if min_auto else ''}"
+        mv = f"min-values {args.min_values}{' (auto)' if min_auto else ''}"
         if backend is not None:
-            _say("mine", f"{_n(len(themes), 'pattern')} ({mv})")
+            _say("mine", _n(len(themes), 'pattern'), mv)
             if not themes:
                 _detail(_NO_PATTERNS)
         timings["mine"] = round(time.monotonic() - t0, 2)
@@ -512,15 +512,12 @@ def _run(args, version: str, log) -> int:
             runs = _ai_runs(args, len(residual))
             log.set(enrich={"runs": runs, "residual": len(residual),
                             "residual_sample": sorted(residual)[:_LOG_SAMPLE]})
-            _say("enrich", f"via {backend[1]}, {_n(runs, 'call')}, "
+            _say("enrich", backend[1], _n(runs, "call"),
                  f"sample {args.sample}{' (auto)' if sample_auto else ''}")
-            prog = lambda i, n, tot: _detail(f"call {i}/{n} done")
+            prog = lambda i, n, tot: n > 1 and _detail(f"call {i}/{n} done")
             enriched = _enrich(themes, subs, residual, backend, args, runs, prog)
             stats = enrichment_stats(themes, enriched, subs)
-            found = f"LLM found {_n(stats['discovered'], 'new pattern')}"
-            if stats["new_values"]:
-                found += f" and added {_n(stats['new_values'], 'slot value')}"
-            _detail(found)
+            _detail(f"LLM found {_n(stats['discovered'], 'new pattern')}")
             log.set(enrichment=stats)
             templates["llm"] = [theme_to_dict(t) for t in enriched]  # what the LLM added
             themes = list(themes) + enriched
@@ -529,11 +526,9 @@ def _run(args, version: str, log) -> int:
         counts["mine"] = len(mined)
         candidates.update(dict.fromkeys(mined))
         if backend is None:
-            _say("mine", f"{_n(len(themes), 'pattern')} -> {_n(len(mined), 'new subdomain')} ({mv})")
+            _say("mine", _n(len(themes), 'pattern'), mv)
             if not themes:
                 _detail(_NO_PATTERNS)
-        else:
-            _detail(f"-> {_n(len(mined), 'new subdomain')}")
 
     if run_fuzz:
         from .fuzz import expand_templates, generate
@@ -547,7 +542,7 @@ def _run(args, version: str, log) -> int:
                       "templates_sample": [str(t) for t in list(fuzz_t)[:_LOG_SAMPLE]]})
         candidates.update(dict.fromkeys(sorted(fuzz_cand) + sorted(typed)))  # stable for --limit
         counts["fuzz"] = len((set(fuzz_cand) | set(typed)) - known)  # new names only
-        _say("fuzz", f"{_n(counts['fuzz'], 'new subdomain')} ({wl})")
+        _say("fuzz", _n(counts['fuzz'], 'new subdomain'), wl)
         timings["fuzz"] = round(time.monotonic() - t0, 2)
 
     if run_predict:
@@ -558,15 +553,14 @@ def _run(args, version: str, log) -> int:
                                                       min_support=args.min_values))]
         runs = _ai_runs(args, len(subs))
         log.set(predict={"runs": runs, "covered_templates": len(covered)})
-        _say("predict", f"via {backend[1]}, {_n(runs, 'run')}, "
+        _say("predict", backend[1], _n(runs, "run"),
              f"sample {args.sample}{' (auto)' if sample_auto else ''}")
-        prog = lambda i, n, tot: _detail(f"run {i}/{n} done")
+        prog = lambda i, n, tot: n > 1 and _detail(f"run {i}/{n} done")
         try:
             guesses = _predict(subs, covered, backend, args, runs, prog)
             candidates.update(dict.fromkeys(guesses))
             counts["predict"] = len(guesses)
             log.record["predict"]["names"] = list(guesses)  # what the LLM guessed, verbatim
-            _detail(f"-> {_n(len(guesses), 'name')}")
         except (SystemExit, Exception) as e:
             msg = str(e).splitlines()[0] if str(e) else type(e).__name__
             term.warn(f"predict skipped ({msg[:80]})")
@@ -588,7 +582,7 @@ def _run(args, version: str, log) -> int:
             f.write("\n".join(out) + "\n")
     if on_screen:
         print()  # and between the results and the summary
-    _say("output", f"{_n(len(out), 'new subdomain')} -> {_out_name(args.out)}")
+    _say("found", _n(len(out), 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
     log.set(output={"path": _out_desc(args.out), "written": len(out)})
     return 0
 
