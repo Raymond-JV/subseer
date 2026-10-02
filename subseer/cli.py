@@ -26,78 +26,76 @@ def _auto_int(value: str):
     return n
 
 
+class _UsageError(SystemExit):
+    """A rejected command line (exit 2); carries the message for the run log."""
+
+    def __init__(self, message: str):
+        super().__init__(2)
+        self.message = message
+
+
 class _Parser(argparse.ArgumentParser):
     """argparse, but usage errors print a loud ERROR line instead of the usage dump."""
 
     def error(self, message):
         term.error(message)
         print("Run 'subseer -h' for usage.", file=sys.stderr)
-        raise SystemExit(2)
+        raise _UsageError(message)
 
 
-def parse_args(argv=None) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="subseer",
         description="Generate new subdomains from the ones you already know. Runs "
         "offline by default (Mine + Fuzz); add --gpt or --ollama to use an LLM.",
     )
-    p.add_argument("input", nargs="?", help="File of subdomains, one per line. Omit if using -d.")
-    p.add_argument("-d", "--domain", help="A single domain instead of an input file.")
-    p.add_argument("-q", "--quiet", action="store_true",
-                   help="Results and errors only: no banner, no progress logs.")
-    p.add_argument("-v", "--version", action="store_true",
-                   help="Show the version and exit.")
+    p.add_argument("input", nargs="?", help="File of subdomains, one per line.")
+    p.add_argument("-d", "--domain", help="A single domain instead of a file.")
+    p.add_argument("-q", "--quiet", action="store_true", help="Results and errors only.")
+    p.add_argument("-v", "--version", action="store_true", help="Show the version and exit.")
 
-    # --- --mine ------------------------------------------------------------
-    m = p.add_argument_group("--mine (offline template mining)",
-                             "Detect naming templates with code. Runs by default (with --fuzz) "
-                             "when no generator is chosen. Add a backend to enrich its slots.")
-    m.add_argument("--mine", action="store_true",
-                   help="Detect templates from the input with code (offline).")
+    m = p.add_argument_group("Mine (offline)",
+                             "Fill the naming templates found in your list.")
+    m.add_argument("--mine", action="store_true", help="Run Mine.")
     m.add_argument("--min-values", metavar="N", default="auto", type=_auto_int,
-                   help="Min distinct values for a slot (int or 'auto').")
+                   help="Distinct values a slot needs (default auto).")
 
-    # --- --fuzz ------------------------------------------------------------
-    f = p.add_argument_group("--fuzz (offline per-host fuzzing)",
-                             "Mutate each host into candidate hostnames. Alone, streams the "
-                             "full expansion as it goes (any wordlist size, no memory blowup).")
-    f.add_argument("--fuzz", action="store_true",
-                   help="Per-host fuzz generator (offline): mutations, typed-slot fills, "
-                   "and FUZZ filled from --wordlist.")
+    f = p.add_argument_group("Fuzz (offline)",
+                             "Permute each host, like gotator or altdns.")
+    f.add_argument("--fuzz", action="store_true", help="Run Fuzz.")
     f.add_argument("-w", "--wordlist", metavar="PATH",
-                   help="DNS word list to fill FUZZ and aid segmentation. Default: the bundled "
-                   "SecLists top-20000 list (override with $SUBSEER_WORDLIST).")
+                   help="Wordlist (default: bundled SecLists top 20k, "
+                   "or $SUBSEER_WORDLIST).")
 
-    # --- --predict ---------------------------------------------------------
-    pr = p.add_argument_group("--predict (LLM net-new names)",
-                              "Ask the model for names templates can't produce. Needs a backend.")
-    pr.add_argument("--predict", action="store_true",
-                    help="LLM predicts net-new names (needs --gpt or --ollama).")
+    pr = p.add_argument_group("Predict (needs an LLM)",
+                              "An LLM infers likely subdomains from your list.")
+    pr.add_argument("--predict", action="store_true", help="Run Predict.")
     pr.add_argument("--predict-count", metavar="N", type=int, default=None,
-                    help="Max guesses to request (default 1000).")
+                    help="Max names to request (default 1000).")
 
-    # --- AI backend (shared by --mine enrichment and --predict) ------------
-    ai = p.add_argument_group("AI backend",
-                              "Pick one to enrich --mine's slots and power --predict.")
+    ai = p.add_argument_group("LLM", "Required for Predict; enhances Mine.")
     ai.add_argument("--gpt", nargs="?", const="gpt-4o-mini", default=None, metavar="MODEL",
-                    help="Use OpenAI (bare = gpt-4o-mini; or --gpt gpt-4o). Reads $OPENAI_API_KEY.")
+                    help="OpenAI-compatible model (default gpt-4o-mini). "
+                    "Reads $OPENAI_API_KEY.")
     ai.add_argument("--ollama", nargs="?", const="qwen2.5", default=None, metavar="MODEL",
-                    help="Use a local Ollama model (bare = qwen2.5). Needs `ollama serve`.")
+                    help="Local Ollama model (default qwen2.5).")
     ai.add_argument("--api-base", metavar="URL", default=None,
-                    help="LLM endpoint (default: OpenAI for --gpt, localhost:11434 for "
-                    "--ollama). Any OpenAI-compatible URL works with --gpt.")
+                    help="LLM endpoint (default: OpenAI, or localhost:11434 for --ollama).")
     ai.add_argument("--sample", metavar="N", default=None, type=_auto_int,
-                    help="Max subs sent to the model as context (int or 'auto').")
+                    help="Subs sent to the model per call (default auto).")
     ai.add_argument("--ai-runs", default=None, metavar="N", type=_auto_int,
-                    help="Model calls merged, for more coverage (int or 'auto').")
+                    help="Model calls to merge (default auto).")
 
-    # --- output ------------------------------------------------------------
-    o = p.add_argument_group("output")
+    o = p.add_argument_group("Output")
     o.add_argument("-o", "--out", metavar="PATH", default="-",
-                   help="Save candidates to a file (default: print to stdout, "
-                   "with progress on stderr so it pipes cleanly).")
+                   help="Write to a file (default: stdout, progress on stderr).")
     o.add_argument("--limit", metavar="N", type=int, default=200000,
-                   help="Max candidates to write (0 = unlimited).")
+                   help="Max results (default 200000; 0 = no limit).")
+    return p
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    p = build_parser()
     args = p.parse_args(argv)
     _check_args(p, args)
     args.sample = args.sample or "auto"
@@ -352,14 +350,19 @@ def main(argv=None) -> int:
         banner.show()
         print(_WELCOME)
         return 0
-    args = parse_args(argv)  # --help / usage errors exit here, before any banner
+    from .runlog import RunLog
+
+    log = RunLog(argv, __version__)
+    try:
+        args = parse_args(argv)  # --help / usage errors exit here, before any banner
+    except _UsageError as e:  # rejected flags: still worth a log line
+        log.set(error=e.message, exit_code=2)
+        log.write()
+        raise
     if args.version:
         print(f"subseer {__version__}")
         return 0
 
-    from .runlog import RunLog
-
-    log = RunLog(argv, __version__)
     saved_stdout = sys.stdout
     rc = 1
     try:
@@ -374,11 +377,8 @@ def main(argv=None) -> int:
         if sys.stdout not in (saved_stdout, sys.stderr):
             sys.stdout.close()  # the --quiet devnull
         sys.stdout = saved_stdout
-        if log.started:  # only runs that got past input validation
-            log.set(exit_code=rc)
-            path = log.write()
-            if path and not args.quiet:
-                print(f"Run log: {path}", file=sys.stderr)  # stderr: never pollutes the results
+        log.set(exit_code=rc)
+        log.write()
 
 
 def _run(args, version: str, log) -> int:
@@ -402,6 +402,7 @@ def _run(args, version: str, log) -> int:
         subs, src = load_subdomains(args.input), args.input
     if not subs:
         term.error(f"no subdomains found in {src}")
+        log.set(error=f"no subdomains found in {src}")
         return 1
     if not args.quiet:
         banner.header(version)  # one line on stderr (TTY only); errors above stay clean

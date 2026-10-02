@@ -1,16 +1,17 @@
-"""Automatic per-run records for debugging: one JSON file per run under ~/.subseer/runs/.
+"""Automatic per-run records for debugging, appended to ~/.subseer/logs.jsonl.
 
+One JSON object per line, one line per run (read with ``jq . ~/.subseer/logs.jsonl``).
 Each record captures what a run did -- command, input, backend, the templates it
 learned (with values), per-generator counts and where the output went -- so a
 surprising result can be traced back later. Override the directory with
-$SUBSEER_LOG_DIR. Writing a record never raises: logging must not break a run.
+$SUBSEER_LOG_DIR. Past ~10 MB the file rolls over to logs.jsonl.1 (one old file
+kept). Writing a record never raises: logging must not break a run.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,9 +19,12 @@ from pathlib import Path
 from . import term
 
 
-def log_dir() -> Path:
+_MAX_BYTES = 10 * 1024 * 1024
+
+
+def log_path() -> Path:
     env = os.environ.get("SUBSEER_LOG_DIR")
-    return Path(env).expanduser() if env else Path.home() / ".subseer" / "runs"
+    return (Path(env).expanduser() if env else Path.home() / ".subseer") / "logs.jsonl"
 
 
 class RunLog:
@@ -40,26 +44,15 @@ class RunLog:
     def warn(self, message: str) -> None:
         self.record["warnings"].append(message)
 
-    @property
-    def started(self) -> bool:
-        """True once the run got past input validation (worth recording)."""
-        return "input" in self.record
-
-    def write(self) -> Path | None:
-        """Write the record to the log dir; returns its path, or None on failure."""
+    def write(self) -> None:
+        """Append the record as one JSON line; on failure, warn and carry on."""
         try:
             self.record["duration_s"] = round(time.monotonic() - self._t0, 2)
-            d = log_dir()
-            d.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            label = re.sub(r"[^A-Za-z0-9._-]+", "_", self.record.get("input", {}).get("label", "run"))
-            path = d / f"{stamp}_{label[:40] or 'run'}.json"
-            n = 2
-            while path.exists():  # two runs in the same second
-                path = d / f"{stamp}_{label[:40] or 'run'}-{n}.json"
-                n += 1
-            path.write_text(json.dumps(self.record, indent=2, default=str) + "\n", encoding="utf-8")
-            return path
+            path = log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > _MAX_BYTES:
+                path.replace(path.with_name(path.name + ".1"))
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(self.record, default=str) + "\n")
         except Exception as e:  # never let logging break the tool
             term.warn(f"could not write run log ({e})")
-            return None

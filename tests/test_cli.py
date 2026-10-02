@@ -102,7 +102,21 @@ def test_bad_flags_fail_before_any_input_is_read():
     assert "expects a hostname" in _usage_error(["-d", "foo bar"])
     assert "-o folder does not exist" in _usage_error(d + ["-o", "no/such/dir/out.txt"])
     assert "-o is a folder" in _usage_error(d + ["-o", tempfile.gettempdir()])
-    assert set(_logs()) == before  # rejected runs are never logged
+    new = [json.loads(l) for l in _logs() if l not in before]
+    assert len(new) == 17  # every rejected run is logged, with why
+    assert all(r["exit_code"] == 2 and r["error"] for r in new)
+    assert new[0]["error"] == "--predict requires --gpt or --ollama"
+
+
+def test_help_version_and_welcome_are_not_logged():
+    before = list(_logs())
+    _capture(main, [])
+    _capture(main, ["--version"])
+    try:
+        _capture(main, ["--help"])
+    except SystemExit as e:
+        assert e.code == 0
+    assert _logs() == before
 
 
 def test_o_cannot_overwrite_the_input():
@@ -182,8 +196,7 @@ def test_wordlist_env_override_is_used_and_logged():
                 os.environ["SUBSEER_WORDLIST"] = old
         assert code == 0 and wl in err
     (new,) = [p for p in _logs() if p not in before]
-    with open(new, encoding="utf-8") as f:
-        rec = json.load(f)
+    rec = json.loads(new)
     assert rec["wordlist"]["source"] == "env" and rec["wordlist"]["words"] == 3
 
 
@@ -209,8 +222,7 @@ def test_default_uses_the_bundled_wordlist():
             os.environ["SUBSEER_WORDLIST"] = old
     assert code == 0 and "bundled" in err
     (new,) = [p for p in _logs() if p not in before]
-    with open(new, encoding="utf-8") as f:
-        rec = json.load(f)
+    rec = json.loads(new)
     assert rec["wordlist"]["source"] == "bundled" and rec["wordlist"]["words"] > 15000
 
 
@@ -232,7 +244,12 @@ def test_limit_caps_the_written_output():
 
 
 def _logs():
-    return sorted(os.path.join(_LOG_DIR, f) for f in os.listdir(_LOG_DIR))
+    """Every record line in the run log (one JSON object per run)."""
+    path = os.path.join(_LOG_DIR, "logs.jsonl")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return f.read().splitlines()
 
 
 def test_every_run_writes_a_run_log():
@@ -244,8 +261,7 @@ def test_every_run_writes_a_run_log():
             written = len(f.read().split())
     new = [p for p in _logs() if p not in before]
     assert len(new) == 1
-    with open(new[0], encoding="utf-8") as f:
-        rec = json.load(f)
+    rec = json.loads(new[0])
     assert rec["command"][0] == "subseer" and "-q" in rec["command"]
     assert rec["input"]["kind"] == "domain" and rec["input"]["count"] == 1
     assert rec["output"]["written"] == written
@@ -262,8 +278,7 @@ def test_run_log_records_learned_templates():
         before = set(_logs())
         _capture(main, ["-q", subs, "--mine", "-o", os.path.join(d, "a.txt")])
     (new,) = [p for p in _logs() if p not in before]
-    with open(new, encoding="utf-8") as f:
-        rec = json.load(f)
+    rec = json.loads(new)
     assert rec["input"]["kind"] == "file" and rec["input"]["count"] == 5
     assert rec["templates"] and "template" in rec["templates"][0]
 
@@ -288,6 +303,19 @@ def test_full_art_skipped_when_not_a_tty():
     pipe = io.StringIO()
     banner.show(pipe)
     assert pipe.getvalue() == ""
+
+
+def test_readme_usage_matches_help():
+    # argparse's help layout changed in 3.13 (e.g. "-d, --domain DOMAIN"); the
+    # README is generated on 3.13+, so only compare there.
+    if sys.version_info < (3, 13):
+        return
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import gen_usage
+
+    with open(gen_usage.README, encoding="utf-8") as f:
+        block = gen_usage.readme_block(f.read())
+    assert block == gen_usage.usage_block(), "README Usage is stale: run scripts/gen_usage.py"
 
 
 def _run_all():
