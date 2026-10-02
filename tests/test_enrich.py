@@ -136,6 +136,24 @@ def test_build_enrich_prompt_includes_templates_and_residual():
     assert "example.com" in prompt
 
 
+def test_slot_label_and_meaning_survive_merge_and_conversion():
+    from subseer.enrich import _enrich_batched
+
+    reply = [{"template": "{s1}.example.com", "novel": True,
+              "slots": [{"name": "s1", "values": ["dev", "qa"], "label": "env",
+                         "meaning": "deployment stage"}]}]
+    themes = _enrich_batched([], ["api.example.com"], "example.com", ["api.example.com"],
+                             2000, lambda user, seed: reply, 1, None, None, 25)
+    (slot,) = themes[0].slots
+    assert (slot.label, slot.meaning) == ("env", "deployment stage")
+
+
+def test_prompt_shows_mined_slot_labels():
+    themes = [_theme("{s1}.example.com",
+                     [Slot(name="s1", kind="enum", values=["dev", "qa"], label="env")])]
+    assert "{s1} (env) = dev, qa" in build_enrich_prompt(themes, [], "example.com")
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

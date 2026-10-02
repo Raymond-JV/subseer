@@ -147,6 +147,28 @@ def test_residual_handles_enum_and_empty_value_slots():
     assert "humpty.example.com" not in cov
 
 
+def test_mined_slots_get_a_label_from_known_vocabularies():
+    from subseer.mine import guess_slot_label
+
+    assert guess_slot_label({"kind": "enum", "values": ["dev", "prod", "qa"]}) == "env"
+    assert guess_slot_label({"kind": "range", "min": 1, "max": 9}) == "number"
+    assert guess_slot_label({"kind": "enum", "values": ["api", "shop", "blog"]}) == ""
+
+
+def test_log_record_keeps_only_fields_that_apply():
+    from subseer.models import Slot, Theme
+    from subseer.pipeline import theme_to_dict
+
+    t = Theme(name="nodes", description="d", evidence=[], kind="template",
+              template="{s1}.{s2}.example.com",
+              slots=[Slot(name="s1", kind="enum", values=["dev", "qa"], label="env"),
+                     Slot(name="s2", kind="range", min=1, max=3)])
+    d = theme_to_dict(t)
+    assert d["slots"] == [{"name": "s1", "label": "env", "values": ["dev", "qa"]},
+                          {"name": "s2", "range": [1, 3]}]
+    assert "evidence" not in d and "candidates" not in d and d["cardinality"] == 6
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

@@ -23,9 +23,29 @@ def load_subdomains(path: str | Path) -> list[str]:
 
 
 def theme_to_dict(theme: Theme) -> dict:
-    d = theme.model_dump()
-    d["cardinality"] = cardinality(theme)
-    return d
+    """A pattern as the run log shows it: only the fields that apply to it."""
+    slots = []
+    for s in theme.slots:
+        d = {"name": s.name}
+        if s.label:
+            d["label"] = s.label
+        if s.meaning:
+            d["meaning"] = s.meaning
+        if s.kind == "enum":
+            d["values"] = s.values
+        else:
+            d.update(range=[s.min, s.max], **({"pad": s.pad} if s.pad else {}),
+                     **({"step": s.step} if s.step != 1 else {}))
+        slots.append(d)
+    out = {"template": theme.template}
+    if theme.name and theme.name != theme.template:  # mined patterns are named by template
+        out["label"] = theme.name
+    out.update(description=theme.description, slots=slots, cardinality=cardinality(theme))
+    if theme.evidence:
+        out["evidence"] = theme.evidence
+    if theme.kind == "enumerate":
+        out["candidates"] = theme.candidates
+    return out
 
 
 def expand_themes(

@@ -389,6 +389,26 @@ def residual_hosts(subs, themes) -> list[str]:
     return out
 
 
+# Readable names for the fuzz vocabulary keys that are shorthand.
+_LABEL_NAMES = {"infra": "service", "cc": "country", "dc": "datacenter", "dir": "direction"}
+
+
+def guess_slot_label(slot: dict) -> str:
+    """Best-effort name for a mined slot: 'number' for ranges, else the known
+    vocabulary (env, region, version, ...) most of its values belong to, or ''."""
+    if slot["kind"] == "range":
+        return "number"
+    from .fuzz import VALUE_VOCAB  # lazy: fuzz imports this module
+
+    cats = Counter(VALUE_VOCAB[v] for v in slot["values"] if v in VALUE_VOCAB)
+    if not cats:
+        return ""
+    cat, hits = cats.most_common(1)[0]
+    if hits < 2 or hits * 2 < len(slot["values"]):
+        return ""
+    return _LABEL_NAMES.get(cat, cat)
+
+
 def mine_themes(subs, apex=None, min_values=3, min_support=3):
     """Detect patterns and return Theme objects (wraps detect_patterns)."""
     from .models import Slot, Theme
@@ -396,6 +416,6 @@ def mine_themes(subs, apex=None, min_values=3, min_support=3):
     out = []
     for d in detect_patterns(subs, apex=apex, min_values=min_values, min_support=min_support):
         d = dict(d)
-        d["slots"] = [Slot(**s) for s in d["slots"]]
+        d["slots"] = [Slot(**s, label=guess_slot_label(s)) for s in d["slots"]]
         out.append(Theme(**d))
     return out

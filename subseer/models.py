@@ -24,6 +24,8 @@ class Slot(BaseModel):
 
     name: str = Field(description="Placeholder name as it appears in the template, e.g. 'n'.")
     kind: Literal["range", "enum"]
+    label: str = Field(default="", description="What the slot is, e.g. 'env', 'region'.")
+    meaning: str = Field(default="", description="One short line on what the values mean.")
 
     # enum slots
     values: list[str] = Field(
@@ -73,6 +75,8 @@ class SlotSpec(BaseModel):
         default_factory=list,
         description="Concrete values for this slot, most-likely first.",
     )
+    label: str = Field(default="", description="What the slot is, e.g. 'env', 'region'.")
+    meaning: str = Field(default="", description="One short line on what the values mean.")
 
 
 class EnrichedTheme(BaseModel):

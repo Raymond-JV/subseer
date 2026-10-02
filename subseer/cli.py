@@ -517,8 +517,10 @@ def _run(args, version: str, log) -> int:
             prog = lambda i, n, tot: _detail(f"call {i}/{n} done")
             enriched = _enrich(themes, subs, residual, backend, args, runs, prog)
             stats = enrichment_stats(themes, enriched, subs)
-            _detail(f"LLM found {_n(stats['discovered'], 'new pattern')} and added "
-                    f"{_n(stats['new_values'], 'slot value')}")
+            found = f"LLM found {_n(stats['discovered'], 'new pattern')}"
+            if stats["new_values"]:
+                found += f" and added {_n(stats['new_values'], 'slot value')}"
+            _detail(found)
             log.set(enrichment=stats)
             templates["llm"] = [theme_to_dict(t) for t in enriched]  # what the LLM added
             themes = list(themes) + enriched

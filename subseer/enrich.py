@@ -48,10 +48,12 @@ propose templates mining could not (it needs >=3 examples per slot): a lone \
 `us-east-1` implies a region slot; observed `{region}` + `{env}` may imply a `{tier}` \
 dimension. Use the residual hosts as seeds.
 
-Return JSON of EXACTLY this shape (each slot is an OBJECT with "name" and a \
-"values" ARRAY of strings — never a bare string):
+Return JSON of EXACTLY this shape (each slot is an OBJECT with "name", a \
+"values" ARRAY of strings — never a bare string — plus a one-word "label" for what \
+the slot is and a short "meaning"):
 {"themes": [{"template": "{s1}.dleague.example.com", "slots": [{"name": "s1", \
-"values": ["memphis", "boston", "miami"]}], "label": "teams", "novel": false}]}
+"values": ["memphis", "boston", "miami"], "label": "team", "meaning": "minor league \
+team cities"}], "label": "teams", "novel": false}]}
 Templates use {s1},{s2},... placeholders and END IN THE APEX; reuse the exact \
 template strings you were given for job A and set novel=true only for templates you \
 discovered (job B). Prefer high-probability values; quality over quantity."""
@@ -69,7 +71,8 @@ def _theme_block(theme, max_vals: int = 40) -> str:
         total = slot_size(s)                          # true count, no materialization
         shown = ", ".join(vals)
         more = f" (+{total - len(vals)} more)" if total > len(vals) else ""
-        lines.append(f"    {{{s.name}}} = {shown}{more}")
+        tag = f" ({s.label})" if s.label else ""
+        lines.append(f"    {{{s.name}}}{tag} = {shown}{more}")
     return "\n".join(lines)
 
 
@@ -110,7 +113,8 @@ def _dns_label(v: str) -> str:
     return v
 
 
-def _slot_from_spec(name: str, values: list[str]) -> Slot | None:
+def _slot_from_spec(name: str, values: list[str], label: str = "",
+                    meaning: str = "") -> Slot | None:
     vals: list[str] = []
     seen: set[str] = set()
     for v in values:
@@ -126,8 +130,8 @@ def _slot_from_spec(name: str, values: list[str]) -> Slot | None:
         nums = [int(v) for v in vals]
         pads = {len(v) for v in vals if len(v) > 1 and v[0] == "0"}
         return Slot(name=name, kind="range", min=min(nums), max=max(nums),
-                    pad=max(pads) if pads else 0)
-    return Slot(name=name, kind="enum", values=vals)
+                    pad=max(pads) if pads else 0, label=label, meaning=meaning)
+    return Slot(name=name, kind="enum", values=vals, label=label, meaning=meaning)
 
 
 def enrichment_to_themes(themes_data, apex: str, mined_templates: set[str]) -> list[Theme]:
@@ -146,7 +150,9 @@ def enrichment_to_themes(themes_data, apex: str, mined_templates: set[str]) -> l
             nm = (_field(sp, "name") or "").strip().lstrip("{").rstrip("}")
             if not nm or ("{" + nm + "}") not in template:
                 continue  # slot must correspond to a placeholder in the template
-            slot = _slot_from_spec(nm, _field(sp, "values", []) or [])
+            slot = _slot_from_spec(nm, _field(sp, "values", []) or [],
+                                   str(_field(sp, "label", "") or "").strip()[:40],
+                                   str(_field(sp, "meaning", "") or "").strip()[:200])
             if slot:
                 slots.append(slot)
         # every placeholder in the template must be covered by a slot
@@ -234,6 +240,8 @@ _OLLAMA_SCHEMA = {
                             "properties": {
                                 "name": {"type": "string"},
                                 "values": {"type": "array", "items": {"type": "string"}},
+                                "label": {"type": "string"},
+                                "meaning": {"type": "string"},
                             },
                             "required": ["name", "values"],
                         },
@@ -365,7 +373,14 @@ def _merge_theme_data(dst: dict[str, dict], items: list[dict]) -> None:
                 "slots": {},
                 "label": td.get("label", "") if isinstance(td.get("label"), str) else "",
                 "novel": bool(td.get("novel", False)),
+                "slot_info": {},
             }
+        for s in td.get("slots") or []:  # first non-empty label/meaning per slot wins
+            if isinstance(s, dict) and isinstance(s.get("name"), str):
+                info = cur["slot_info"].setdefault(s["name"], {"label": "", "meaning": ""})
+                for k in ("label", "meaning"):
+                    if not info[k] and isinstance(s.get(k), str):
+                        info[k] = s[k]
         for nm, vals in _slot_pairs(td):
             dest = cur["slots"].setdefault(nm, [])
             have = set(dest)
@@ -437,7 +452,8 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
 
     flat = [
         {"template": d["template"], "label": d["label"], "novel": d["novel"],
-         "slots": [{"name": nm, "values": vals} for nm, vals in d["slots"].items()]}
+         "slots": [{"name": nm, "values": vals, **d["slot_info"].get(nm, {})}
+                   for nm, vals in d["slots"].items()]}
         for d in merged.values()
     ]
     return enrichment_to_themes(flat, apex, mined)
