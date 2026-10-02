@@ -416,6 +416,24 @@ _WELCOME = (
 )
 
 
+_MAX_LOGGED_EVENTS = 200
+
+
+def _llm_event_handler(log):
+    """Show LLM retries under the current step and record every retry and failure in
+    the run log (failures already print their own WARNING line)."""
+    def handler(kind: str, fields: dict) -> None:
+        logged = log.record.setdefault("llm_events", [])
+        if len(logged) < _MAX_LOGGED_EVENTS:
+            logged.append({"event": kind, **fields})
+        if kind == "retry":
+            wait = fields["wait"]
+            secs = f"{wait:.1f}s" if wait < 10 else f"{wait:.0f}s"
+            _detail(f"{fields['provider']} {fields['reason']}, retrying in {secs} "
+                    f"({fields['attempt']}/{fields['of']})")
+    return handler
+
+
 def main(argv=None) -> int:
     from . import __version__, banner
 
@@ -437,8 +455,12 @@ def main(argv=None) -> int:
         print(f"subseer {__version__}")
         return 0
 
+    from . import events
+
     saved_stdout = sys.stdout
     rc = 1
+    on_llm_event = _llm_event_handler(log)
+    events.subscribe(on_llm_event)
     try:
         rc = _run(args, __version__, log)
         return rc
@@ -448,6 +470,7 @@ def main(argv=None) -> int:
         log.set(error=f"{type(e).__name__}: {e}")
         raise
     finally:
+        events.unsubscribe(on_llm_event)
         if sys.stdout not in (saved_stdout, sys.stderr):
             sys.stdout.close()  # the --quiet devnull
         sys.stdout = saved_stdout

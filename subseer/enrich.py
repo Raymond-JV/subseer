@@ -21,10 +21,9 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.error
-import urllib.request
 
-from . import prompts, term
+from . import events, prompts, term
+from .llm_http import ollama_chat
 from .sampling import shuffled_slice
 from .expand import slot_size, slot_values
 from .mine import detect_apex
@@ -352,19 +351,7 @@ def _ollama_enrich_once(user: str, model: str, url: str, num_ctx: int,
         ],
         "options": options,
     }
-    req = urllib.request.Request(
-        url.rstrip("/") + "/api/chat",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=1200) as r:
-            data = json.loads(r.read().decode())
-    except urllib.error.URLError as e:
-        raise SystemExit(
-            f"Could not reach Ollama at {url} ({e.reason if hasattr(e, 'reason') else e}). "
-            f"Start it with `ollama serve` and pull the model: `ollama pull {model}`."
-        )
+    data = ollama_chat(url, payload, model)
     return _parse_enrichment(data.get("message", {}).get("content", ""))
 
 
@@ -477,6 +464,7 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
         except SystemExit as exc:                       # backend unavailable after retries
             term.warn(f"enrich call skipped ({exc}); keeping mined + partial results")
         except Exception as exc:                        # parse/transport hiccup on one call
+            events.emit("error", provider="enrich", error=repr(exc), attempts=1)
             term.warn(f"enrich call failed ({exc!r}); keeping mined + partial results")
         _tick()
 
