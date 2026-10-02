@@ -12,28 +12,22 @@ default, thinking off, modest output. ~$0.10-0.15 per target.
 from __future__ import annotations
 
 import json
-import random
 import re
 import urllib.error
 import urllib.request
 
 from . import prompts
+from .sampling import shuffled_slice
 from .mine import detect_apex
 
 SYSTEM_PROMPT = prompts.load("predict")  # subseer/prompts/predict.txt
 
 
-def build_sample(subs, n: int = 3000, seed: int = 0) -> list[str]:
-    """Deduped context sample: all of them if <= n, else a sample of n.
-
-    ``seed`` makes the subset reproducible; a different seed per run (see
-    ``run_propose_local``) surfaces a different slice of a large list so multiple
-    runs explore more of it. Lists at or below ``n`` are unaffected - all are sent.
-    """
-    uniq = sorted({s.strip().lower() for s in subs if s.strip()})
-    if len(uniq) <= n:
-        return uniq
-    return sorted(random.Random(seed).sample(uniq, n))
+def build_sample(subs, n: int = 3000, call: int = 0, seed: int = 0) -> list[str]:
+    """The known subs sent as context on call number ``call``: all of them if they
+    fit in ``n``, else that call's slice of a shuffle-and-split pass (see
+    subseer/sampling.py), so successive calls cover the whole list."""
+    return shuffled_slice({s.strip().lower() for s in subs if s.strip()}, n, call, seed)
 
 
 def normalize_candidate(c: str, apex: str) -> str | None:
@@ -46,9 +40,10 @@ def normalize_candidate(c: str, apex: str) -> str | None:
     return c
 
 
-def _user_prompt(subs, apex, sample, count, covered_templates, seed: int = 0) -> str:
+def _user_prompt(subs, apex, sample, count, covered_templates, call: int = 0,
+                 seed: int = 0) -> str:
     """The user message; wording lives in prompts/predict_user.txt (+ predict_covered.txt)."""
-    samp = build_sample(subs, sample, seed=seed)
+    samp = build_sample(subs, sample, call=call, seed=seed)
     covered = ""
     if covered_templates:
         patterns = "\n".join(list(covered_templates)[:80])
@@ -141,23 +136,21 @@ def run_propose_local(subs, apex: str | None = None, model: str = "qwen2.5",
     prompt/schema and yielding zero candidates). When not given, it is sized to
     fit the whole prompt plus the reply.
 
-    ``runs`` calls the model that many times, each with a different ``seed`` -
-    which drives BOTH the model's sampling AND the context subset: when the sub
-    list is larger than ``sample``, each run sees a different slice of it, so
-    multiple runs explore more of a big list (and the model varies too). Lists at
-    or below ``sample`` send all subs every run (only the model output varies).
-    Set ``seed`` for a single reproducible run. ``progress(i, n, running_total)``
-    is an optional callback invoked after each run.
+    ``runs`` calls the model that many times. When the sub list is larger than
+    ``sample``, it is shuffled and split across the calls, so the first
+    ceil(len/sample) calls send every sub once and any extra calls reshuffle (see
+    subseer/sampling.py). Lists at or below ``sample`` send all subs every call
+    (only the model output varies). ``seed`` fixes the shuffle and the model
+    sampling. ``progress(i, n, running_total)`` is called after each run.
     """
     apex = apex if apex is not None else detect_apex(subs)
     n_runs = max(1, runs)
     merged: list[str] = []
     seen: set[str] = set()
     for i in range(n_runs):
-        # One seed per run drives both the sample slice and the model sampling;
-        # honor an explicit single seed when the caller wants reproducibility.
-        run_seed = seed if (n_runs == 1 and seed is not None) else i
-        user = _user_prompt(subs, apex, sample, count, covered_templates, seed=run_seed)
+        run_seed = seed if (n_runs == 1 and seed is not None) else i  # model sampling
+        user = _user_prompt(subs, apex, sample, count, covered_templates, call=i,
+                            seed=seed or 0)
         nctx = num_ctx
         if nctx is None:
             # ~4 chars/token heuristic + headroom, then round up to a sane floor.
@@ -177,9 +170,9 @@ def run_propose_openai(subs, apex: str | None = None, model: str = "gpt-4o-mini"
                        runs: int = 1, seed: int | None = None, progress=None) -> list[str]:
     """Propose net-new subdomains via an OpenAI-compatible model (e.g. gpt-4o-mini).
 
-    Same per-run seeding/merging as ``run_propose_local`` (each run varies the
-    sample slice and the model sampling). Reads $OPENAI_API_KEY unless ``api_key``
-    is given; ``base_url`` targets any compatible endpoint.
+    Same shuffle-and-split context and merging as ``run_propose_local``. Reads
+    $OPENAI_API_KEY unless ``api_key`` is given; ``base_url`` targets any
+    compatible endpoint.
     """
     from .openai_compat import DEFAULT_BASE_URL, chat_json
 
@@ -189,8 +182,9 @@ def run_propose_openai(subs, apex: str | None = None, model: str = "gpt-4o-mini"
     merged: list[str] = []
     seen: set[str] = set()
     for i in range(n_runs):
-        run_seed = seed if (n_runs == 1 and seed is not None) else i
-        user = _user_prompt(subs, apex, sample, count, covered_templates, seed=run_seed)
+        run_seed = seed if (n_runs == 1 and seed is not None) else i  # model sampling
+        user = _user_prompt(subs, apex, sample, count, covered_templates, call=i,
+                            seed=seed or 0)
         content = chat_json(model, SYSTEM_PROMPT, user, base_url=base_url,
                             api_key=api_key, max_tokens=16000, temperature=0.5, seed=run_seed)
         for c in _parse_candidates(content):

@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     ai.add_argument("--sample", metavar="N", default=None, type=_auto_int,
                     help="Subs sent to the model per call (default auto).")
     ai.add_argument("--ai-runs", default=None, metavar="N", type=_auto_int,
-                    help="Model calls to merge (default auto).")
+                    help="Model calls (default auto: enough to send every sub, max 10).")
 
     o = p.add_argument_group("Output")
     o.add_argument("-o", "--out", metavar="PATH", default="-",
@@ -195,15 +195,21 @@ def _out_stream(path: str):
             f.close()
 
 
-def _auto_runs(n: int) -> int:
-    """Model runs scaled to list size (bigger list -> more sampled slices covered)."""
-    if n <= 2000:
-        return 2
-    if n <= 5000:
-        return 5
-    if n <= 10000:
-        return 8
-    return 10
+_MAX_AUTO_RUNS = 10
+
+
+def _auto_runs(n: int, sample: int) -> int:
+    """Calls needed to send all n hosts, ``sample`` per call (shuffle-and-split),
+    capped at _MAX_AUTO_RUNS; set --ai-runs to go past the cap."""
+    from .sampling import calls_to_cover
+
+    return min(_MAX_AUTO_RUNS, calls_to_cover(n, sample))
+
+
+def _coverage(n: int, sample: int, runs: int) -> str:
+    """A note for the progress line when the calls can't send every host."""
+    share = min(1.0, runs * sample / n) if n else 1.0
+    return "" if share >= 1 else f"covers {share:.0%} of {n:,} hosts"
 
 
 def _auto_sample(n: int) -> int:
@@ -234,10 +240,10 @@ def _resolve_auto(value, n: int, auto_fn, label: str) -> int:
 
 
 def _ai_runs(args, n: int) -> int:
-    """Model calls for a list of n hosts. Extra calls exist to cover lists too big
-    for one prompt, so auto uses 1 when the whole list fits in --sample."""
+    """Model calls for a list of n hosts: auto sends every host once (shuffle-and-
+    split, max 10 calls); an explicit --ai-runs always wins."""
     if _is_auto(args.ai_runs):
-        return 1 if n <= args.sample else _auto_runs(n)
+        return _auto_runs(n, args.sample)
     return max(1, int(args.ai_runs))
 
 
@@ -245,7 +251,7 @@ def _is_auto(value) -> bool:
     return str(value).strip().lower() == "auto"
 
 
-_STEP_STYLE = {"found": term.GREEN, "limit": term.YELLOW}
+_STEP_STYLE = {"generated": term.GREEN, "limit": term.YELLOW}
 
 
 def _say(step: str, msg: str, *notes: str) -> None:
@@ -398,7 +404,7 @@ def _run_fuzz_standalone(args, subs, src, log) -> int:
         print()  # and between the results and the summary
     if hit_limit:
         _say("limit", f"reached {cap:,}, stopped")
-    _say("found", _n(n, 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
+    _say("generated", _n(n, 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
     log.set(mode="fuzz-stream", generators=["fuzz"], counts={"fuzz": n},
             output={"path": _out_desc(args.out), "written": n})
     return 0
@@ -543,7 +549,8 @@ def _run(args, version: str, log) -> int:
             batch = OPENAI_BATCH if backend[0] == "gpt" else LOCAL_BATCH
             calls = planned_calls(len(themes), len(residual), runs, batch)
             _say("enrich", backend[1], _n(calls, "call"),
-                 f"sample {args.sample}{' (auto)' if sample_auto else ''}")
+                 f"sample {args.sample}{' (auto)' if sample_auto else ''}",
+                 _coverage(len(residual), args.sample, runs))
             prog = lambda i, n, tot: n > 1 and _detail(f"call {i}/{n} done")
             enriched = _enrich(themes, subs, residual, backend, args, runs, prog)
             stats = enrichment_stats(themes, enriched, subs)
@@ -602,7 +609,8 @@ def _run(args, version: str, log) -> int:
         runs = _ai_runs(args, len(subs))
         log.set(predict={"runs": runs, "covered_templates": len(covered)})
         _say("predict", backend[1], _n(runs, "run"),
-             f"sample {args.sample}{' (auto)' if sample_auto else ''}")
+             f"sample {args.sample}{' (auto)' if sample_auto else ''}",
+             _coverage(len(subs), args.sample, runs))
         prog = lambda i, n, tot: n > 1 and _detail(f"run {i}/{n} done")
         try:
             guesses = _predict(subs, covered, backend, args, runs, prog)
@@ -630,7 +638,7 @@ def _run(args, version: str, log) -> int:
             f.write("\n".join(out) + "\n")
     if on_screen:
         print()  # and between the results and the summary
-    _say("found", _n(len(out), 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
+    _say("generated", _n(len(out), 'subdomain'), "" if args.out == "-" else f"saved to {args.out}")
     log.set(output={"path": _out_desc(args.out), "written": len(out)})
     return 0
 

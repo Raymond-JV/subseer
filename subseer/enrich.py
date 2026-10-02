@@ -20,12 +20,12 @@ Works against the API or a local Ollama model (offline).
 from __future__ import annotations
 
 import json
-import random
 import re
 import urllib.error
 import urllib.request
 
 from . import prompts, term
+from .sampling import shuffled_slice
 from .expand import slot_size, slot_values
 from .mine import detect_apex
 from .models import Slot, Theme
@@ -444,7 +444,7 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
 
     - Job A (expand mined templates): the templates are fixed, so this runs ONCE,
       in batches (a big single call truncates into unparseable JSON).
-    - Job B (discover new slots from the residual): Monte Carlo - ``runs`` passes,
+    - Job B (discover new slots from the residual): shuffle-and-split - ``runs`` calls,
       each over a different ``sample``-sized slice of the residual, so more runs
       cover more of a big residual. No template re-work, so runs scale freely.
 
@@ -486,14 +486,11 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
         user = build_enrich_prompt(batch, [], apex, sample)
         _try_call(user, base_seed)
 
-    # Job B - Monte-Carlo discovery over the residual, `runs` passes.
+    # Job B - discovery over the residual, shuffled and split across `runs` calls.
     if do_discovery:
         for r in range(n_runs):
             run_seed = seed if (n_runs == 1 and seed is not None) else r
-            if len(residual) > sample:
-                slice_ = random.Random(run_seed).sample(residual, sample)
-            else:
-                slice_ = residual
+            slice_ = shuffled_slice(residual, sample, r, seed if seed is not None else 0)
             user = build_enrich_prompt([], slice_, apex, sample)  # residual-only -> discovery
             _try_call(user, run_seed)
 

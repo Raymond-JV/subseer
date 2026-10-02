@@ -87,6 +87,15 @@ def test_the_reply_example_in_the_predict_prompt_parses():
     assert _parse_candidates(example) == ["jenkins.example.com", "vault.example.com"]
 
 
+def test_calls_split_a_big_list_without_gaps_or_repeats():
+    subs = [f"h{i}.example.com" for i in range(5000)]
+    slices = [build_sample(subs, 2000, call=c) for c in range(3)]  # ceil(5000/2000) = 3
+    seen = [h for s in slices for h in s]
+    assert len(seen) == len(set(seen)) == 5000           # every host once, none twice
+    assert all(len(s) <= 2000 for s in slices)
+    assert build_sample(subs, 2000, call=3) != slices[0]  # a 4th call starts a reshuffled pass
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

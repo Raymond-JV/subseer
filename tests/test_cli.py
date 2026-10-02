@@ -35,12 +35,12 @@ def test_auto_sample_anchored_near_2k():
     assert _auto_sample(773890) == 4000
 
 
-def test_auto_runs_scales_with_size():
-    assert _auto_runs(300) == 2
-    assert _auto_runs(2000) == 2
-    assert _auto_runs(4000) == 5
-    assert _auto_runs(9000) == 8
-    assert _auto_runs(50000) == 10
+def test_auto_runs_is_enough_calls_to_cover_the_list():
+    assert _auto_runs(300, 2000) == 1
+    assert _auto_runs(2000, 2000) == 1
+    assert _auto_runs(4000, 2000) == 2
+    assert _auto_runs(5001, 2000) == 3
+    assert _auto_runs(773890, 4000) == 10  # capped; the run line shows the coverage
 
 
 def test_auto_min_values_scales_with_size():
@@ -51,12 +51,12 @@ def test_auto_min_values_scales_with_size():
 
 
 def test_resolve_auto_int_passthrough():
-    assert _resolve_auto("7", 9999, _auto_runs, "local-runs") == 7
+    assert _resolve_auto("7", 9999, _auto_min_values, "min-values") == 7
     assert _resolve_auto(3, 9999, _auto_min_values, "min-values") == 3
 
 
 def test_resolve_auto_keyword():
-    assert _resolve_auto("auto", 4000, _auto_runs, "local-runs") == 5
+    assert _resolve_auto("auto", 4000, _auto_min_values, "min-values") == 3
     assert _resolve_auto("AUTO", 12000, _auto_min_values, "min-values") == 4
 
 
@@ -244,7 +244,7 @@ def test_results_go_to_stdout_by_default_and_progress_to_stderr():
     assert code == 0
     lines = [l for l in out.splitlines() if l]
     assert lines and all(" " not in l and "." in l for l in lines)  # hostnames only
-    assert "input " in err and "found " in err
+    assert "input " in err and "generated " in err
 
 
 def test_on_a_terminal_the_summary_follows_the_results():
@@ -260,7 +260,7 @@ def test_on_a_terminal_the_summary_follows_the_results():
         else:
             os.environ["NO_COLOR"] = old
     lines = screen.getvalue().splitlines()
-    assert lines[-1] == "found 2 subdomains"
+    assert lines[-1] == "generated 2 subdomains"
     assert lines[-2] == ""  # blank line between the results and the summary
     assert all(l.endswith(".example.com") for l in lines[-4:-2])  # the 2 results
     assert lines[-5] == ""  # blank line between the step lines and the results
@@ -272,7 +272,7 @@ def test_auto_ai_runs_is_one_call_when_the_list_fits_in_the_sample():
     args = parse_args(["-d", "x.example.com", "--gpt", "--api-base", "http://llm"])
     args.sample = 2000
     assert _ai_runs(args, 6) == 1 and _ai_runs(args, 2000) == 1
-    assert _ai_runs(args, 4000) == _auto_runs(4000)  # bigger than one prompt: sample more
+    assert _ai_runs(args, 4000) == 2  # bigger than one prompt: enough calls to cover it
     args.ai_runs = "3"
     assert _ai_runs(args, 6) == 3  # an explicit value always wins
 
