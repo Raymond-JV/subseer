@@ -69,6 +69,24 @@ def test_finalize_normalizes_dedups_drops_known():
     assert out == ["grafana.example.com", "vault.example.com"]  # grafana deduped, api dropped (known)
 
 
+def test_user_message_is_rendered_from_the_prompt_files():
+    from subseer.propose import _user_prompt
+
+    msg = _user_prompt(["api.example.com"], "example.com", 2000, 5, ["{s1}.dev.example.com"])
+    assert msg.startswith("Apex domain: example.com")
+    assert "ALREADY covered" in msg and "{s1}.dev.example.com" in msg
+    assert msg.endswith("Propose up to 5 plausible NEW subdomains under example.com, "
+                        "most-likely first.")
+    assert "ALREADY" not in _user_prompt(["api.example.com"], "example.com", 2000, 5, [])
+
+
+def test_the_reply_example_in_the_predict_prompt_parses():
+    from subseer.propose import SYSTEM_PROMPT
+
+    example = next(l for l in SYSTEM_PROMPT.splitlines() if l.startswith('{"candidates"'))
+    assert _parse_candidates(example) == ["jenkins.example.com", "vault.example.com"]
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

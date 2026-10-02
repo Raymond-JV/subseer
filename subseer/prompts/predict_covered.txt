@@ -1,0 +1,8 @@
+# Added to the --predict user message when Mine found patterns.
+# Lines starting with '#' at the top are comments and are not sent.
+# Variables: $patterns (one template per line, at most 80).
+
+These naming patterns are ALREADY covered by other subseer steps. Do NOT propose
+subdomains that merely fit them - focus on names outside this structure (new services,
+themes, organization-specific names):
+$patterns

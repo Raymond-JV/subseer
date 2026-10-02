@@ -1,0 +1,11 @@
+# User message for a --predict call.
+# Lines starting with '#' at the top are comments and are not sent.
+# Variables: $apex, $count (hosts shown), $hosts (one per line), $limit (--predict-count),
+# $covered (predict_covered.txt when Mine found patterns, else empty).
+
+Apex domain: $apex
+
+Known subdomains (sample of $count):
+$hosts
+$covered
+Propose up to $limit plausible NEW subdomains under $apex, most-likely first.

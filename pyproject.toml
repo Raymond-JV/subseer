@@ -23,4 +23,4 @@ build-backend = "setuptools.build_meta"
 include = ["subseer*"]
 
 [tool.setuptools.package-data]
-subseer = ["data/*.txt", "data/*.md"]
+subseer = ["data/*.txt", "data/*.md", "prompts/*.txt"]

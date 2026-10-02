@@ -25,38 +25,12 @@ import re
 import urllib.error
 import urllib.request
 
-from . import term
+from . import prompts, term
 from .expand import slot_size, slot_values
 from .mine import detect_apex
 from .models import Slot, Theme
 
-SYSTEM_PROMPT = """\
-You are an expert at subdomain reconnaissance for AUTHORIZED security testing. You \
-are given naming TEMPLATES already mined from a target's known subdomains, each \
-with the concrete slot values observed so far, plus a sample of RESIDUAL hosts \
-(one-offs that fit no template). Two jobs:
-
-A. EXPAND existing slots. For each template's slots, add real-world members of the \
-SAME category that are missing. If a slot's values are sports team cities \
-(memphis, austin) add the rest of that category (boston, miami, phoenix, ...). If \
-they are AWS regions, add the rest. Only add values that genuinely belong to the \
-same category - do not pad with unrelated guesses.
-
-B. DISCOVER new templates. From a SINGLE example or from the stack you infer, \
-propose templates mining could not (it needs >=3 examples per slot): a lone \
-`api-dev` implies an `{s1}` env slot = {dev, prod, qa, stage, ...}; a lone \
-`us-east-1` implies a region slot; observed `{region}` + `{env}` may imply a `{tier}` \
-dimension. Use the residual hosts as seeds.
-
-Return JSON of EXACTLY this shape (each slot is an OBJECT with "name", a \
-"values" ARRAY of strings — never a bare string — plus a one-word "label" for what \
-the slot is and a short "meaning"):
-{"themes": [{"template": "{s1}.dleague.example.com", "slots": [{"name": "s1", \
-"values": ["memphis", "boston", "miami"], "label": "team", "meaning": "minor league \
-team cities"}], "label": "teams", "novel": false}]}
-Templates use {s1},{s2},... placeholders and END IN THE APEX; reuse the exact \
-template strings you were given for job A and set novel=true only for templates you \
-discovered (job B). Prefer high-probability values; quality over quantity."""
+SYSTEM_PROMPT = prompts.load("enrich")  # subseer/prompts/enrich.txt
 
 _MAX_VALS = 400  # cap values per slot to keep expansion sane
 
@@ -77,17 +51,19 @@ def _theme_block(theme, max_vals: int = 40) -> str:
 
 
 def build_enrich_prompt(themes, residual, apex: str, sample: int = 150) -> str:
-    tmpl_block = "\n".join(_theme_block(t) for t in themes) or "(none)"
+    """The user message for job A (templates) and/or job B (residual hosts).
+
+    Wording lives in prompts/enrich_templates.txt and prompts/enrich_residual.txt.
+    """
+    parts = []
+    if themes:
+        parts.append(prompts.render("enrich_templates", apex=apex,
+                                    templates="\n".join(_theme_block(t) for t in themes)))
     resid = residual[:sample]
-    resid_block = "\n".join(resid) or "(none)"
-    return (
-        f"Apex domain: {apex}\n\n"
-        f"MINED TEMPLATES (with observed slot values):\n{tmpl_block}\n\n"
-        f"RESIDUAL HOSTS (fit no template; sample of {len(resid)}):\n{resid_block}\n\n"
-        "For job A, return each mined template with its slots' values EXPANDED. "
-        "For job B, return new templates (novel=true). Keep templates ending in "
-        f"{apex}."
-    )
+    if resid or not themes:
+        parts.append(prompts.render("enrich_residual", apex=apex, count=len(resid),
+                                    hosts="\n".join(resid) or "(none)"))
+    return "\n\n".join(parts)
 
 
 # --- converting the model's output into expandable Theme objects --------------
@@ -167,7 +143,7 @@ def enrichment_to_themes(themes_data, apex: str, mined_templates: set[str]) -> l
         out.append(Theme(
             name=label or ("discovered" if novel else "enriched"),
             description=("AI-discovered dimension." if novel else "AI-expanded slot values."),
-            evidence=[],
+            evidence=[str(e) for e in (_field(td, "evidence", []) or [])][:10],
             kind="template",
             template=template,
             slots=slots,
@@ -248,6 +224,7 @@ _OLLAMA_SCHEMA = {
                     },
                     "label": {"type": "string"},
                     "novel": {"type": "boolean"},
+                    "evidence": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["template", "slots"],
             },
@@ -374,7 +351,12 @@ def _merge_theme_data(dst: dict[str, dict], items: list[dict]) -> None:
                 "label": td.get("label", "") if isinstance(td.get("label"), str) else "",
                 "novel": bool(td.get("novel", False)),
                 "slot_info": {},
+                "evidence": [],
             }
+        ev = td.get("evidence")
+        for e in (ev if isinstance(ev, list) else []):
+            if isinstance(e, str) and e not in cur["evidence"] and len(cur["evidence"]) < 10:
+                cur["evidence"].append(e.strip().lower())
         for s in td.get("slots") or []:  # first non-empty label/meaning per slot wins
             if isinstance(s, dict) and isinstance(s.get("name"), str):
                 info = cur["slot_info"].setdefault(s["name"], {"label": "", "meaning": ""})
@@ -452,6 +434,7 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
 
     flat = [
         {"template": d["template"], "label": d["label"], "novel": d["novel"],
+         "evidence": d["evidence"],
          "slots": [{"name": nm, "values": vals, **d["slot_info"].get(nm, {})}
                    for nm, vals in d["slots"].items()]}
         for d in merged.values()

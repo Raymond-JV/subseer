@@ -1,0 +1,8 @@
+# User message for an enrich call doing job B (discover templates in leftover hosts).
+# Lines starting with '#' at the top are comments and are not sent.
+# Variables: $apex, $count (hosts shown), $hosts (one per line).
+
+Apex domain: $apex
+
+RESIDUAL HOSTS (job B; fit no template; sample of $count):
+$hosts

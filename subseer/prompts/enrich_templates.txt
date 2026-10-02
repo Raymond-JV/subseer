@@ -1,0 +1,8 @@
+# User message for an enrich call doing job A (expand mined templates).
+# Lines starting with '#' at the top are comments and are not sent.
+# Variables: $apex, $templates (one "- template" line per template, each slot below it).
+
+Apex domain: $apex
+
+MINED TEMPLATES (job A; observed slot values):
+$templates

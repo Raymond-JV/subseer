@@ -154,6 +154,37 @@ def test_prompt_shows_mined_slot_labels():
     assert "{s1} (env) = dev, qa" in build_enrich_prompt(themes, [], "example.com")
 
 
+def test_system_prompts_load_from_text_files_without_comments():
+    from subseer import enrich, propose
+
+    for prompt, shape in ((enrich.SYSTEM_PROMPT, '{"themes":'),
+                          (propose.SYSTEM_PROMPT, '{"candidates":')):
+        assert prompt.startswith("You help with subdomain") and "#" not in prompt.splitlines()[0]
+        assert shape in prompt  # the reply shape the parsers expect is spelled out
+
+
+def test_the_reply_example_in_the_enrich_prompt_parses():
+    # The JSON example in prompts/enrich.txt must be a reply subseer accepts in full.
+    from subseer.enrich import SYSTEM_PROMPT, _enrich_batched
+
+    example = next(l for l in SYSTEM_PROMPT.splitlines() if l.startswith('{"themes"'))
+    themes = _enrich_batched([], ["api-dev.example.com"], "example.com", ["api-dev.example.com"],
+                             2000, lambda user, seed: _parse_enrichment(example), 1, None,
+                             None, 25)
+    (t,) = themes
+    assert t.template == "api-{s1}.example.com" and t.evidence == ["api-dev.example.com"]
+    assert t.slots[0].label == "env" and "staging" in t.slots[0].values
+
+
+def test_each_enrich_call_only_shows_its_own_job():
+    themes = [_theme("{s1}.example.com",
+                     [Slot(name="s1", kind="enum", values=["dev", "qa"])])]
+    job_a = build_enrich_prompt(themes, [], "example.com")
+    job_b = build_enrich_prompt([], ["api-dev.example.com"], "example.com")
+    assert "MINED TEMPLATES" in job_a and "RESIDUAL" not in job_a
+    assert "RESIDUAL HOSTS" in job_b and "MINED" not in job_b
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

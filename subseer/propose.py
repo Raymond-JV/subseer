@@ -17,23 +17,10 @@ import re
 import urllib.error
 import urllib.request
 
+from . import prompts
 from .mine import detect_apex
 
-SYSTEM_PROMPT = """\
-You are an expert at subdomain reconnaissance for AUTHORIZED security testing \
-(bug bounty / pentest). You are given a sample of KNOWN subdomains for a target \
-plus its apex domain. Propose plausible ADDITIONAL subdomains that likely exist \
-but are NOT in the sample and are NOT trivial variations of them (those are found \
-by other tooling). Draw on three sources:
-1. Common infrastructure organizations like this typically run - tailored to the \
-stack you infer from the sample (e.g. seeing gitlab/sonar suggests jenkins, nexus, \
-argocd, vault; seeing identity hosts suggests okta, adfs, sts, mfa).
-2. Target-specific knowledge - what you know about THIS organization: its products, \
-brands, events, teams, sponsors.
-3. Theme continuation - extend naming themes present in the sample (e.g. \
-crossoverlondon/crossovermilan -> other cities; a codename family -> its siblings).
-Return full subdomains under the apex, most-likely first. Do NOT repeat the sample. \
-Do NOT pad with low-probability filler - quality over quantity."""
+SYSTEM_PROMPT = prompts.load("predict")  # subseer/prompts/predict.txt
 
 
 def build_sample(subs, n: int = 3000, seed: int = 0) -> list[str]:
@@ -60,23 +47,14 @@ def normalize_candidate(c: str, apex: str) -> str | None:
 
 
 def _user_prompt(subs, apex, sample, count, covered_templates, seed: int = 0) -> str:
+    """The user message; wording lives in prompts/predict_user.txt (+ predict_covered.txt)."""
     samp = build_sample(subs, sample, seed=seed)
-    listing = "\n".join(samp)
-    covered_block = ""
+    covered = ""
     if covered_templates:
-        shown = list(covered_templates)[:80]
-        covered_block = (
-            "\n\nThese naming patterns are ALREADY covered by structural/permutation "
-            "tooling. Do NOT propose subdomains that merely fit these templates - focus "
-            "on names OUTSIDE this structure (novel services, semantic/thematic, "
-            "org-specific):\n" + "\n".join(shown)
-        )
-    return (
-        f"Apex domain: {apex}\n\n"
-        f"Known subdomains (sample of {len(samp)}):\n{listing}"
-        f"{covered_block}\n\n"
-        f"Propose up to {count} plausible NEW subdomains under {apex}, most-likely first."
-    )
+        patterns = "\n".join(list(covered_templates)[:80])
+        covered = "\n" + prompts.render("predict_covered", patterns=patterns) + "\n"
+    return prompts.render("predict_user", apex=apex, count=len(samp), hosts="\n".join(samp),
+                          covered=covered, limit=count)
 
 
 def _finalize(candidates, subs, apex) -> list[str]:
