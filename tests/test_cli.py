@@ -127,6 +127,19 @@ def test_o_cannot_overwrite_the_input():
         assert "overwrite the input" in _usage_error([subs, "-o", subs])
 
 
+def test_subs_file_right_after_gpt_or_ollama_is_the_input_not_the_model():
+    with tempfile.TemporaryDirectory() as d:
+        subs = os.path.join(d, "subs.txt")
+        with open(subs, "w", encoding="utf-8") as f:
+            f.write("api.example.com\n")
+        args = parse_args(["--mine", "--gpt", subs, "--api-base", "http://llm"])
+        assert (args.input, args.gpt) == (subs, "gpt-4o-mini")
+        args = parse_args(["--mine", "--ollama", subs])
+        assert (args.input, args.ollama) == (subs, "qwen2.5")
+        args = parse_args([subs, "--ollama", "llama3.1"])  # a real model name is kept
+        assert (args.input, args.ollama) == (subs, "llama3.1")
+
+
 def test_gpt_needs_a_key_unless_api_base_is_set():
     old = os.environ.pop("OPENAI_API_KEY", None)
     try:

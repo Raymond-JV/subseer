@@ -111,6 +111,13 @@ _HOSTNAME = re.compile(r"^(\*\.)?[a-z0-9_-]+(\.[a-z0-9_-]+)+$")
 
 def _check_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Reject bad flag combinations up front, before any input is read."""
+    # `--gpt subs.txt` / `--ollama subs.txt`: argparse takes the file as the optional
+    # MODEL. If that "model" is an existing file and no input was given, it's the input.
+    for flag, default in (("gpt", "gpt-4o-mini"), ("ollama", "qwen2.5")):
+        value = getattr(args, flag)
+        if value and not args.input and os.path.isfile(value):
+            args.input = value
+            setattr(args, flag, default)
     if args.domain and args.input:
         p.error("use -d DOMAIN or a subs file, not both")
     if not args.domain and not args.input and not args.version:
