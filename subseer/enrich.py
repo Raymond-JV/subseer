@@ -173,13 +173,27 @@ def _placeholders(template: str) -> list[str]:
     return re.findall(r"\{([a-zA-Z0-9_]+)\}", template)
 
 
-def enrichment_stats(mined, enriched) -> dict:
+def enrichment_stats(mined, enriched, subs=None) -> dict:
     """Counts for reporting: templates enriched vs discovered, and new values added.
 
     ``new_values`` = values in enriched slots that the matching mined template did
-    NOT already have (Job A), plus all values in newly-discovered templates (Job B).
+    NOT already have (Job A), plus values in newly-discovered templates (Job B).
+    With ``subs``, Job B counts only values not already in the input (a discovered
+    ``{s1}.example.com`` listing your own ``api``/``www`` adds nothing new).
     """
     from .expand import slot_size, slot_values
+    from .mine import tokenize
+
+    seen: set[str] = set()  # every label and token in the input
+    for h in subs or []:
+        for label in h.strip().lower().split("."):
+            seen.add(label)
+            seen.update(tokenize(label)[0])
+
+    def discovered_new(slot) -> int:
+        if not subs or slot.kind != "enum":
+            return slot_size(slot)                                 # count only, no materialization
+        return sum(1 for v in slot.values if v.strip().lower() not in seen)
 
     mined_vals: dict[str, dict[str, set]] = {}
     for t in mined:
@@ -192,7 +206,7 @@ def enrichment_stats(mined, enriched) -> dict:
         base = mined_vals.get(e.template)
         if base is None:
             n_discovered += 1
-            new_values += sum(slot_size(s) for s in e.slots)          # count only, no materialization
+            new_values += sum(discovered_new(s) for s in e.slots)
         else:
             n_enriched += 1
             for s in e.slots:

@@ -118,6 +118,14 @@ def test_enrichment_stats_counts_added_values_and_kinds():
     assert stats == {"enriched": 1, "discovered": 1, "new_values": 7}
 
 
+def test_enrichment_stats_skips_discovered_values_you_already_have():
+    subs = ["api.example.com", "www.example.com", "shop.example.com"]
+    enriched = [_theme("{s1}.example.com",
+                       [Slot(name="s1", kind="enum", values=["api", "www", "shop", "qa", "stage"])])]
+    stats = enrichment_stats([], enriched, subs)
+    assert stats == {"enriched": 0, "discovered": 1, "new_values": 2}  # only qa, stage
+
+
 def test_build_enrich_prompt_includes_templates_and_residual():
     themes = [_theme("{s1}.dleague.example.com",
                      [Slot(name="s1", kind="enum", values=["memphis", "austin"])])]

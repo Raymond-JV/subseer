@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ class RunLog:
             "subseer_version": version,
             "command": ["subseer", *argv],
             "cwd": os.getcwd(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
             "warnings": [],
         }
 

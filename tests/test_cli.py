@@ -231,7 +231,37 @@ def test_results_go_to_stdout_by_default_and_progress_to_stderr():
     assert code == 0
     lines = [l for l in out.splitlines() if l]
     assert lines and all(" " not in l and "." in l for l in lines)  # hostnames only
-    assert "Loaded" in err and "Wrote" in err
+    assert "input " in err and "output " in err
+
+
+def test_on_a_terminal_the_summary_follows_the_results():
+    screen = _FakeTTY()  # stdout and stderr share one terminal
+    old = os.environ.get("NO_COLOR")
+    os.environ["NO_COLOR"] = "1"
+    try:
+        with contextlib.redirect_stdout(screen), contextlib.redirect_stderr(screen):
+            main(["-d", "api.dev.example.com", "--fuzz", "--mine", "--limit", "2"])
+    finally:
+        if old is None:
+            os.environ.pop("NO_COLOR")
+        else:
+            os.environ["NO_COLOR"] = old
+    lines = screen.getvalue().splitlines()
+    assert lines[-1] == "output   2 new subdomains -> stdout"
+    assert lines[-2] == ""  # blank line between the results and the summary
+    assert all(l.endswith(".example.com") for l in lines[-4:-2])  # the 2 results
+    assert lines[-5] == ""  # blank line between the step lines and the results
+
+
+def test_auto_ai_runs_is_one_call_when_the_list_fits_in_the_sample():
+    from subseer.cli import _ai_runs
+
+    args = parse_args(["-d", "x.example.com", "--gpt", "--api-base", "http://llm"])
+    args.sample = 2000
+    assert _ai_runs(args, 6) == 1 and _ai_runs(args, 2000) == 1
+    assert _ai_runs(args, 4000) == _auto_runs(4000)  # bigger than one prompt: sample more
+    args.ai_runs = "3"
+    assert _ai_runs(args, 6) == 3  # an explicit value always wins
 
 
 def test_limit_caps_the_written_output():
@@ -280,7 +310,8 @@ def test_run_log_records_learned_templates():
     (new,) = [p for p in _logs() if p not in before]
     rec = json.loads(new)
     assert rec["input"]["kind"] == "file" and rec["input"]["count"] == 5
-    assert rec["templates"] and "template" in rec["templates"][0]
+    assert rec["templates"]["mined"] and "template" in rec["templates"]["mined"][0]
+    assert "mine" in rec["timings"] and rec["settings"]["min_values_auto"]
 
 
 def test_header_is_one_line_on_a_tty_and_silent_otherwise():
@@ -295,7 +326,7 @@ def test_header_is_one_line_on_a_tty_and_silent_otherwise():
             os.environ.pop("NO_COLOR")
         else:
             os.environ["NO_COLOR"] = old
-    assert tty.getvalue() == "subseer v9.9.9 - sees the subs you don't\n"
+    assert tty.getvalue() == "subseer v9.9.9 - sees the subs you don't\n\n"
     assert pipe.getvalue() == ""
 
 
@@ -316,6 +347,19 @@ def test_readme_usage_matches_help():
     with open(gen_usage.README, encoding="utf-8") as f:
         block = gen_usage.readme_block(f.read())
     assert block == gen_usage.usage_block(), "README Usage is stale: run scripts/gen_usage.py"
+
+
+def test_readme_mine_example_fills_the_missing_grid_cells():
+    # The README's worked example: 4 hosts, {service} x {env}, two cells missing.
+    # Also pins that --min-values 2 (auto on small lists) isn't overridden by a
+    # hidden 3-host minimum.
+    with tempfile.TemporaryDirectory() as d:
+        subs = os.path.join(d, "subs.txt")
+        with open(subs, "w", encoding="utf-8") as f:
+            f.write("api.dev.example.com\nweb.dev.example.com\n"
+                    "api.prod.example.com\nmail.prod.example.com\n")
+        _, out, _ = _capture(main, [subs, "--mine"])
+    assert out.split() == ["mail.dev.example.com", "web.prod.example.com"]
 
 
 def _run_all():

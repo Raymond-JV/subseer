@@ -170,7 +170,7 @@ def header(version: str, stream=None) -> None:
         line = f"\x1b[1;38;5;81msubseer\x1b[0m \x1b[38;5;245mv{version} - {_MOTTO}\x1b[0m"
     else:
         line = f"subseer v{version} - {_MOTTO}"
-    _emit(line + "\n", stream)
+    _emit(line + "\n\n", stream)  # blank line before the step lines
 
 
 if __name__ == "__main__":
