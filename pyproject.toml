@@ -1,7 +1,9 @@
 [project]
 name = "subseer"
 version = "0.1.0"
-description = "Generate candidate subdomains from a known list: offline pattern mining + fuzzing, with optional LLM enrichment (OpenAI or Ollama)."
+description = "Generate new subdomains from the ones you already know, offline or with an LLM."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2",
