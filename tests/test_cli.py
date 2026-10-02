@@ -64,17 +64,70 @@ def test_api_base_defaults_per_backend_and_overrides():
     args = parse_args(["-d", "x.example.com"])
     assert _api_base("gpt", args) == "https://api.openai.com/v1"
     assert _api_base("ollama", args) == "http://localhost:11434"
-    args = parse_args(["-d", "x.example.com", "--api-base", "http://box:11434"])
+    args = parse_args(["-d", "x.example.com", "--ollama", "--api-base", "http://box:11434"])
     assert _api_base("ollama", args) == "http://box:11434"
 
 
-def test_resolve_auto_invalid_exits():
+def _usage_error(argv):
+    """Run main(argv), expecting an argparse usage error; return its stderr."""
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            main(argv)
+        except SystemExit as e:
+            assert e.code == 2
+        else:
+            raise AssertionError(f"expected a usage error for {argv}")
+    assert err.getvalue().startswith("ERROR: ")  # loud, no usage dump
+    return err.getvalue()
+
+
+def test_bad_flags_fail_before_any_input_is_read():
+    d = ["-d", "x.example.com"]
+    before = set(_logs())
+    assert "--predict requires --gpt or --ollama" in _usage_error(d + ["--predict"])
+    assert "only one LLM" in _usage_error(d + ["--gpt", "--ollama"])
+    assert "--api-base requires" in _usage_error(d + ["--api-base", "http://x"])
+    assert "not both" in _usage_error(d + ["subs.txt"])
+    assert "provide a domain" in _usage_error(["-q"])
+    assert "subs file not found" in _usage_error(["no-such-file.txt"])
+    assert "wordlist not found" in _usage_error(d + ["-w", "no-such-list.txt"])
+    assert "positive integer or 'auto'" in _usage_error(d + ["--sample", "banana"])
+    assert "at least 1" in _usage_error(d + ["--ai-runs", "0"])
+    assert "--limit" in _usage_error(d + ["--limit", "-1"])
+    assert "--sample requires" in _usage_error(d + ["--sample", "50"])
+    assert "--ai-runs requires" in _usage_error(d + ["--ai-runs", "3"])
+    assert "--predict-count requires --predict" in _usage_error(d + ["--predict-count", "5"])
+    assert "expects a hostname" in _usage_error(["-d", "https://x.com"])
+    assert "expects a hostname" in _usage_error(["-d", "foo bar"])
+    assert "-o folder does not exist" in _usage_error(d + ["-o", "no/such/dir/out.txt"])
+    assert "-o is a folder" in _usage_error(d + ["-o", tempfile.gettempdir()])
+    assert set(_logs()) == before  # rejected runs are never logged
+
+
+def test_o_cannot_overwrite_the_input():
+    with tempfile.TemporaryDirectory() as d:
+        subs = os.path.join(d, "subs.txt")
+        with open(subs, "w", encoding="utf-8") as f:
+            f.write("api.example.com\n")
+        assert "overwrite the input" in _usage_error([subs, "-o", subs])
+
+
+def test_gpt_needs_a_key_unless_api_base_is_set():
+    old = os.environ.pop("OPENAI_API_KEY", None)
     try:
-        _resolve_auto("banana", 100, _auto_runs, "local-runs")
-    except SystemExit as e:
-        assert e.code == 2
-    else:
-        raise AssertionError("expected SystemExit on invalid value")
+        assert "OPENAI_API_KEY" in _usage_error(["-d", "x.example.com", "--gpt"])
+        args = parse_args(["-d", "x.example.com", "--gpt", "--api-base", "http://vllm:8000/v1"])
+        assert args.gpt == "gpt-4o-mini"
+    finally:
+        if old is not None:
+            os.environ["OPENAI_API_KEY"] = old
+
+
+def test_d_is_normalized_and_llm_defaults_fill_in():
+    args = parse_args(["-d", "API.Example.com."])
+    assert args.domain == "api.example.com"
+    assert (args.sample, args.ai_runs, args.predict_count) == ("auto", "auto", 1000)
 
 
 class _FakeTTY(io.StringIO):
@@ -198,12 +251,6 @@ def test_every_run_writes_a_run_log():
     assert rec["output"]["written"] == written
     assert rec["exit_code"] == 0 and rec["mode"] == "generate"
     assert "templates" in rec and "fuzz" in rec["counts"]
-
-
-def test_input_errors_are_not_logged():
-    before = set(_logs())
-    _capture(main, ["-q"])            # no input -> error, nothing ran
-    assert set(_logs()) == before
 
 
 def test_run_log_records_learned_templates():

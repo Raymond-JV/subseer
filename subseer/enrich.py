@@ -22,10 +22,10 @@ from __future__ import annotations
 import json
 import random
 import re
-import sys
 import urllib.error
 import urllib.request
 
+from . import term
 from .expand import slot_size, slot_values
 from .mine import detect_apex
 from .models import Slot, Theme
@@ -399,11 +399,9 @@ def _enrich_batched(themes, subs, apex, residual, sample, once, runs, seed,
         try:
             _merge_theme_data(merged, once(user, run_seed))
         except SystemExit as exc:                       # backend unavailable after retries
-            print(f"    enrich call skipped ({exc}); keeping mined + partial results",
-                  file=sys.stderr)
+            term.warn(f"enrich call skipped ({exc}); keeping mined + partial results")
         except Exception as exc:                        # parse/transport hiccup on one call
-            print(f"    enrich call failed ({exc!r}); keeping mined + partial results",
-                  file=sys.stderr)
+            term.warn(f"enrich call failed ({exc!r}); keeping mined + partial results")
         _tick()
 
     # Job A - enrich each template batch once (no residual in these prompts).

@@ -5,14 +5,38 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import re
 import sys
 from pathlib import Path
 
+from . import term
 from .pipeline import expand_themes, load_subdomains, theme_to_dict
 
 
+def _auto_int(value: str):
+    """argparse type: a positive int, or 'auto'."""
+    if value.strip().lower() == "auto":
+        return "auto"
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive integer or 'auto', got {value!r}")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {n}")
+    return n
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse, but usage errors print a loud ERROR line instead of the usage dump."""
+
+    def error(self, message):
+        term.error(message)
+        print("Run 'subseer -h' for usage.", file=sys.stderr)
+        raise SystemExit(2)
+
+
 def parse_args(argv=None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="subseer",
         description="Generate new subdomains from the ones you already know. Runs "
         "offline by default (Mine + Fuzz); add --gpt or --ollama to use an LLM.",
@@ -30,7 +54,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "when no generator is chosen. Add a backend to enrich its slots.")
     m.add_argument("--mine", action="store_true",
                    help="Detect templates from the input with code (offline).")
-    m.add_argument("--min-values", metavar="N", default="auto",
+    m.add_argument("--min-values", metavar="N", default="auto", type=_auto_int,
                    help="Min distinct values for a slot (int or 'auto').")
 
     # --- --fuzz ------------------------------------------------------------
@@ -49,8 +73,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                               "Ask the model for names templates can't produce. Needs a backend.")
     pr.add_argument("--predict", action="store_true",
                     help="LLM predicts net-new names (needs --gpt or --ollama).")
-    pr.add_argument("--predict-count", metavar="N", type=int, default=1000,
-                    help="Max guesses to request.")
+    pr.add_argument("--predict-count", metavar="N", type=int, default=None,
+                    help="Max guesses to request (default 1000).")
 
     # --- AI backend (shared by --mine enrichment and --predict) ------------
     ai = p.add_argument_group("AI backend",
@@ -62,9 +86,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ai.add_argument("--api-base", metavar="URL", default=None,
                     help="LLM endpoint (default: OpenAI for --gpt, localhost:11434 for "
                     "--ollama). Any OpenAI-compatible URL works with --gpt.")
-    ai.add_argument("--sample", metavar="N", default="auto",
+    ai.add_argument("--sample", metavar="N", default=None, type=_auto_int,
                     help="Max subs sent to the model as context (int or 'auto').")
-    ai.add_argument("--ai-runs", default="auto", metavar="N",
+    ai.add_argument("--ai-runs", default=None, metavar="N", type=_auto_int,
                     help="Model calls merged, for more coverage (int or 'auto').")
 
     # --- output ------------------------------------------------------------
@@ -74,7 +98,58 @@ def parse_args(argv=None) -> argparse.Namespace:
                    "with progress on stderr so it pipes cleanly).")
     o.add_argument("--limit", metavar="N", type=int, default=200000,
                    help="Max candidates to write (0 = unlimited).")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    _check_args(p, args)
+    args.sample = args.sample or "auto"
+    args.ai_runs = args.ai_runs or "auto"
+    args.predict_count = args.predict_count or 1000
+    return args
+
+
+# A bare hostname: labels of letters, digits, '-', '_' (and a leading '*'), with a dot.
+_HOSTNAME = re.compile(r"^(\*\.)?[a-z0-9_-]+(\.[a-z0-9_-]+)+$")
+
+
+def _check_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject bad flag combinations up front, before any input is read."""
+    if args.domain and args.input:
+        p.error("use -d DOMAIN or a subs file, not both")
+    if not args.domain and not args.input and not args.version:
+        p.error("provide a domain with -d, or a subs file as the argument")
+    if args.domain:
+        args.domain = args.domain.strip().lower().rstrip(".")
+        if not _HOSTNAME.match(args.domain):
+            p.error(f"-d expects a hostname like example.com, got {args.domain!r}")
+    if args.input and not os.path.isfile(args.input):
+        p.error(f"subs file not found: {args.input}")
+    if args.gpt is not None and args.ollama is not None:
+        p.error("use only one LLM: --gpt or --ollama")
+    has_llm = args.gpt is not None or args.ollama is not None
+    if args.predict and not has_llm:
+        p.error("--predict requires --gpt or --ollama")
+    if not has_llm:
+        for flag, value in (("--api-base", args.api_base), ("--sample", args.sample),
+                            ("--ai-runs", args.ai_runs)):
+            if value is not None:
+                p.error(f"{flag} requires --gpt or --ollama")
+    if args.gpt is not None and not args.api_base and not os.environ.get("OPENAI_API_KEY"):
+        p.error("--gpt needs $OPENAI_API_KEY (or --api-base for a keyless endpoint)")
+    if args.predict_count is not None and not args.predict:
+        p.error("--predict-count requires --predict")
+    if args.wordlist and not os.path.isfile(args.wordlist):
+        p.error(f"wordlist not found: {args.wordlist}")
+    if args.predict_count is not None and args.predict_count < 1:
+        p.error("--predict-count must be at least 1")
+    if args.out != "-":
+        out = Path(args.out)
+        if not out.parent.is_dir():
+            p.error(f"-o folder does not exist: {out.parent}")
+        if out.is_dir():
+            p.error(f"-o is a folder, expected a file path: {out}")
+        if args.input and out.resolve() == Path(args.input).resolve():
+            p.error("-o would overwrite the input file; pick another path")
+    if args.limit < 0:
+        p.error("--limit must be 0 (unlimited) or more")
 
 
 # Built-in per-template cap so one runaway template can't eat the whole --limit.
@@ -140,11 +215,7 @@ def _resolve_auto(value, n: int, auto_fn, label: str) -> int:
         resolved = auto_fn(n)
         print(f"  {label}: auto -> {resolved} (for {n:,} subs)")
         return resolved
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        print(f"Invalid --{label} value {value!r}; expected an integer or 'auto'.", file=sys.stderr)
-        raise SystemExit(2)
+    return int(value)
 
 
 _DEFAULT_API_BASE = {"gpt": "https://api.openai.com/v1", "ollama": "http://localhost:11434"}
@@ -212,9 +283,6 @@ def _resolve_words(args, log):
 
     from .fuzz import WORDS, load_wordlist
 
-    if args.wordlist and not Path(args.wordlist).is_file():
-        print(f"--wordlist: file not found: {args.wordlist}", file=sys.stderr)
-        raise SystemExit(2)
     env = os.environ.get("SUBSEER_WORDLIST")
     path = args.wordlist or (env if env and Path(env).is_file() else None)
     if path:
@@ -324,23 +392,16 @@ def _run(args, version: str, log) -> int:
     if args.quiet:  # results and errors only (errors go to stderr explicitly)
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
 
-    # Backend selection (at most one).
-    if args.gpt is not None and args.ollama is not None:
-        print("Use only one backend: --gpt or --ollama.", file=sys.stderr)
-        return 2
     backend = ("gpt", args.gpt) if args.gpt is not None else \
               ("ollama", args.ollama) if args.ollama is not None else None
 
     # Input: a single domain (-d) or a file of subs (positional).
     if args.domain:
-        subs, src = [args.domain.strip().lower()], args.domain
-    elif args.input:
-        subs, src = load_subdomains(args.input), args.input
+        subs, src = [args.domain], args.domain
     else:
-        print("Provide a domain with -d, or a subs file as the argument.", file=sys.stderr)
-        return 1
+        subs, src = load_subdomains(args.input), args.input
     if not subs:
-        print(f"No subdomains found in {src}", file=sys.stderr)
+        term.error(f"no subdomains found in {src}")
         return 1
     if not args.quiet:
         banner.header(version)  # one line on stderr (TTY only); errors above stay clean
@@ -366,9 +427,6 @@ def _run(args, version: str, log) -> int:
     run_mine = args.mine or not explicit
     run_fuzz = args.fuzz or not explicit
     run_predict = args.predict or (not explicit and backend is not None)
-    if run_predict and backend is None:
-        print("--predict needs a backend: add --gpt or --ollama.", file=sys.stderr)
-        return 2
 
     print(f"Loaded {len(subs):,} subdomains from {src}")
     from .mine import mine_themes
@@ -428,7 +486,7 @@ def _run(args, version: str, log) -> int:
             print(f"Predict added {len(guesses):,} name(s).")
         except (SystemExit, Exception) as e:
             msg = str(e).splitlines()[0] if str(e) else type(e).__name__
-            print(f"  predict skipped ({msg[:80]}).")
+            term.warn(f"predict skipped ({msg[:80]})")
             log.warn(f"predict skipped: {msg}")
 
     out = [c for c in candidates if c not in known]

@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from . import term
 
 
 def log_dir() -> Path:
@@ -60,5 +61,5 @@ class RunLog:
             path.write_text(json.dumps(self.record, indent=2, default=str) + "\n", encoding="utf-8")
             return path
         except Exception as e:  # never let logging break the tool
-            print(f"warning: could not write run log ({e})", file=sys.stderr)
+            term.warn(f"could not write run log ({e})")
             return None

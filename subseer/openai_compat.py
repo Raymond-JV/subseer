@@ -63,7 +63,7 @@ def chat_json(model: str, system: str, user: str, *,
     api_key = api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise SystemExit(
-            "No API key: set OPENAI_API_KEY to use --openai "
+            "No API key: set OPENAI_API_KEY to use --gpt "
             "(get one at https://platform.openai.com/api-keys)."
         )
     body = {
