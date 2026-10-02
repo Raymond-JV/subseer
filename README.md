@@ -6,6 +6,10 @@
 
 <p align="center"><i>sees the subs you don't</i></p>
 
+<p align="center">
+  <img src="assets/demo.gif" alt="subseer --predict --gpt subs.txt">
+</p>
+
 Subseer generates new subdomains from the ones you already know. It runs offline, and
 can optionally use an LLM to predict names your data alone won't reveal.
 
