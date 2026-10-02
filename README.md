@@ -2,174 +2,259 @@
   <img src="assets/seer.svg" alt="subseer" width="280">
 </p>
 
-# subseer
+<h1 align="center">subseer</h1>
 
-Generate candidate subdomains from the ones you already know. Feed `subseer` a
-list of known subdomains; it learns their **naming patterns** and returns plausible
-new hosts to go resolve. Built for authorized recon (bug bounty / pentest).
+<p align="center"><i>sees the subs you don't</i></p>
 
-Offline and free by default; add an LLM (OpenAI or a local Ollama model) only when
-you want it to reach beyond what the data alone can show.
+Subseer generates new subdomains from the ones you already know. It runs offline, and
+can optionally use an LLM to predict names your data alone won't reveal.
 
-## The idea
+Built for authorized recon (bug bounty / pentest).
 
-Three generators, each good at something different:
+## Contents
 
-| Generator | What it does | Needs |
-|---|---|---|
-| **mine** | Learn structural templates from your hosts and recombine the values you have (cross-fill, numeric ranges). | code, offline, free |
-| **fuzz** | Mutate each host — separators, plurals, affixes, typed-slot swaps (`dev`→`qa/prod`), dictionary-word FUZZ. | code, offline, free |
-| **AI** | Fill mined slots with real-world values you *don't* have (`memphis, austin` → all 30 teams), discover latent slots, and predict net-new names. | LLM (OpenAI or Ollama) |
-
-The split matters: an LLM is great at *knowledge* but a bad, expensive bulk
-enumerator. So the model only emits compact things — slot values, a few template
-specs — and **code multiplies them out**. A template like `{team}.dleague.example.com`
-is tiny but expands to dozens of hosts.
-
-```
-known subs ─▶ mine (code) ─┐
-             fuzz (code) ──┤─▶ merge + dedup ─▶ candidates
-             AI enrich/predict (optional) ─┘
-```
+- [Install](#install)
+- [LLM providers](#llm-providers)
+  - [Auto-tuning](#auto-tuning)
+- [Modes](#modes)
+  - [Mine](#mine)
+  - [Fuzz](#fuzz)
+  - [Predict](#predict)
+- [Usage](#usage)
+- [Logging](#logging)
 
 ## Install
 
 ```bash
-pip install -e .                      # from a clone
-# or, straight from GitHub:
 pipx install git+https://github.com/Raymond-JV/subseer
 ```
 
-Only needed for the AI layer:
+For OpenAI (`--gpt`), set your API key:
 
 ```bash
-export OPENAI_API_KEY=sk-...          # for --gpt
-# --ollama just needs a local `ollama serve`
+export OPENAI_API_KEY=sk-...
 ```
 
-## Use
+For a local model (`--ollama`), start the Ollama server:
 
 ```bash
-# Offline, free — mine + fuzz (candidates print to stdout):
-subseer subs.txt
-
-# Save to a file instead:
-subseer subs.txt -o candidates.txt
-
-# Add AI (OpenAI gpt-4o-mini): enrich mined slots + discover + predict:
-subseer subs.txt --gpt
-
-# AI via a local model (offline, private):
-subseer subs.txt --ollama            # bare = qwen2.5
-
-# Just mining, enriched by the model:
-subseer subs.txt --mine --gpt
-
-# Pipe straight into your resolver (progress goes to stderr, so the pipe stays clean):
-subseer subs.txt --gpt | dnsx | httpx -sc
+ollama serve
 ```
 
-`subseer --help` groups every flag under the generator it belongs to.
+## LLM providers
 
-## Generators
+AI is required for `Predict` and enhances `Mine`.
 
-- **`--mine`** — tokenizes each host (on `.`, `-`, and letter/digit boundaries),
-  finds positions whose value-set recurs across contexts, and emits templates with
-  observed enum values and numeric ranges. Cross-fills combinations you haven't
-  deployed. Exhaustive, deterministic, free. PSL-aware apex detection (handles
-  `.co.uk`, `.com.mx`, …).
-- **`--fuzz`** — per-host mutations: separator swaps, pluralize, affix strip, typed
-  closed-vocab swaps, and dictionary-word `FUZZ`. Used **alone**, it *streams* the
-  full expansion as it goes (any wordlist size, no memory blowup):
-  ```bash
-  subseer subs.txt --fuzz --wordlist /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt | dnsx
-  ```
-- **`--predict`** — the model predicts net-new names templates can't produce (infra
-  it infers, target-specific brands, theme continuation). Needs a backend.
-
-With **no generator flag**, `subseer` runs **mine + fuzz** (and, if a backend is
-set, also enrich + predict) and merges everything into one deduped file.
-
-## Wordlists
-
-`--fuzz` fills the `FUZZ` token (and segments hostnames) from a DNS word list. Use a
-**DNS/subdomain** list, not a web-content/directory list — the latter is full of paths
-like `wp-admin` and `backup.zip` that make poor hostnames.
-
-subseer **bundles** a 20,000-entry DNS list (SecLists `subdomains-top1million-20000`,
-MIT — see [subseer/data/README.md](subseer/data/README.md)) and uses it by default, so
-`--fuzz` works out of the box with no setup. Override it by pointing `$SUBSEER_WORDLIST`
-at any file, or passing `--wordlist`. Bigger lists (`…-110000.txt`, `dns-Jhaddix.txt`)
-trade coverage for volume.
-
-## AI backend
-
-Pick one; a backend flag turns on the AI layer (enriches `--mine`, powers `--predict`):
-
-| Flag | Backend | Default model |
+| Flag | Provider | Default model |
 |---|---|---|
 | `--gpt [MODEL]` | OpenAI-compatible (reads `$OPENAI_API_KEY`) | `gpt-4o-mini` |
 | `--ollama [MODEL]` | local Ollama (`ollama serve`) | `qwen2.5` |
 
-`--api-base` points `--gpt` at any compatible endpoint (Groq, Together, vLLM,
-Ollama's `/v1`). gpt-4o-mini is the sweet spot: far cheaper than a frontier model,
-much stronger than a small local one.
+`--gpt MODEL` and `--ollama MODEL` pick a specific model; the defaults are a cheap,
+capable starting point — bump to a stronger one for better predictions.
 
-**Enrich** runs the mined templates once (batched) and then does Monte-Carlo
-**discovery** passes over the residual one-offs. **Propose** samples your list for
-context. Both merge across `--ai-runs` calls.
+`--api-base URL` sets the endpoint. With `--gpt` it can be any OpenAI-compatible API
+(Groq, Together, vLLM); with `--ollama` it's your Ollama server (default
+`localhost:11434`).
 
-## Auto-tuning
+### Auto-tuning
 
-Three knobs default to `auto` and scale with your list size — you rarely set them:
+The auto-tune flags default to `auto`, but you can also specify them manually.
 
 | Flag | `auto` behavior |
 |---|---|
 | `--sample` | subs sent to the model as context (~2k, more for huge lists) |
-| `--ai-runs` | model calls merged (more for bigger lists / residuals) |
-| `--min-values` | miner's slot threshold (stricter on huge lists to cut noise) |
+| `--ai-runs` | model calls: enough to send every sub once (max 10) |
 
-## Output
+Large lists don't fit in one prompt, so subseer shuffles your list and splits it
+across calls:
 
-- Candidates print to **stdout** by default, with progress on stderr, so subseer pipes
-  cleanly into `dnsx`/`httpx` like the other recon tools.
-- `-o` / `--out PATH` — save candidates to a file instead.
-- `--limit N` — max candidates to write (default 200,000; `0` = unlimited). Each
-  template is also capped at 50,000 so one huge template can't crowd out the rest.
-- `-q` / `--quiet` — results and errors only (no banner line, no progress logs).
-- `-v` / `--version` — print the version.
+- Each call gets the next slice of up to `--sample` subs, so every sub is sent once.
+- Auto uses at most 10 calls. If your list needs more, the run says how much was
+  sent (e.g. `covers 52%`); set `--ai-runs` higher to send all of it.
+- Extra runs reshuffle and send the list again in new groupings.
+- Results are merged and deduplicated.
 
-Run bare `subseer` for the full seer and a usage hint; normal runs show a single
-header line on stderr instead, and nothing at all when stderr isn't a terminal.
+## Modes
 
-## Run logs
+With no mode flag, `subseer` defaults to **Mine + Fuzz**.
 
-For debugging, every run is recorded automatically as one JSON file in
-`~/.subseer/runs/` (override with `$SUBSEER_LOG_DIR`): timestamp, version, the full
-command, the input and its size, backend and model, the templates learned (with
-their values), per-generator counts, anything trimmed by `--limit`, and where the
-output went. API keys are read from the environment and never recorded.
+| Mode | AI |
+|---|---|
+| Mine | optional — an LLM enriches its slots |
+| Fuzz | none — fully offline |
+| Predict | required — needs an LLM |
 
-## Suggested pipeline
-
-Generation is cheap; resolution is where you spend time — so DNS-filter before you
-HTTP-probe:
+### Mine
 
 ```bash
-subseer subs.txt --gpt -o candidates.txt
-dnsx  -l candidates.txt -o resolved.txt          # keep only hosts that exist
-httpx -l resolved.txt -sc -title -rl 10          # probe the survivors, politely
+subseer subs.txt --mine
 ```
 
-## Tests
+Tokenizes your hosts into slots, then fills every combination — including ones
+you haven't deployed. Give it four hosts with two slots:
 
-Stdlib-only, no API key or network needed (the OpenAI path is stubbed):
+| host | `{service}` | `{env}` |
+|---|---|---|
+| api.dev.example.com | api | dev |
+| web.dev.example.com | web | dev |
+| api.prod.example.com | api | prod |
+| mail.prod.example.com | mail | prod |
+
+`{service}` = {api, web, mail}, `{env}` = {dev, prod}. Mine expands the full 3×2 grid
+and emits the combinations you're missing:
+
+```
+mail.dev.example.com
+web.prod.example.com
+```
+
+`--min-values` (default `auto`) sets how many distinct values a slot needs. Higher
+values cut noise on large lists.
+
+Enhance the scan with AI.
 
 ```bash
-for t in tests/test_*.py; do python "$t"; done   # or: pytest
+subseer subs.txt --mine --gpt
 ```
 
-## Note
+An LLM can enrich the slots with values you don't have:
 
-Dual-use recon tooling. Only run it against targets you're authorized to test, and
-respect each program's scope and rate limits.
+`{env}` = {dev, prod} → also **staging**, **qa**
+
+so the grid grows to 3×4 and you also get:
+
+```
+api.staging.example.com
+web.staging.example.com
+mail.staging.example.com
+api.qa.example.com
+web.qa.example.com
+mail.qa.example.com
+```
+
+It can also discover a new slot that isn't in your data. Here it infers your hosts are
+split by region and adds a `{region}` slot:
+
+`{region}` = {us, eu, ap}
+
+```
+us.api.dev.example.com
+eu.api.dev.example.com
+ap.api.dev.example.com
+```
+
+It may also suggest more values for the new slot:
+
+`{region}` = {us, eu, ap} → also **ca**, **sa**, **me**, **af**
+
+### Fuzz
+
+```bash
+subseer subs.txt --fuzz
+```
+
+The `fuzz` mode runs fully offline and generates permutations of your subdomains —
+similar to tools like `gotator` and `altdns`.
+
+It uses SecLists'
+[`subdomains-top1million-20000.txt`](https://github.com/danielmiessler/SecLists/blob/master/Discovery/DNS/subdomains-top1million-20000.txt)
+by default, but you can specify your own with `-w` / `--wordlist`:
+
+```bash
+subseer subs.txt --fuzz -w wordlist.txt
+```
+
+| Technique | Example |
+|---|---|
+| Separator swap | `api-dev` → `api.dev`, `apidev` |
+| Plural toggle | `asset` → `assets` |
+| Affix strip | `dev-portal` → `portal` |
+| Number range | `node2` → `node0` … `node50` |
+| Environment swap | `dev` → `qa`, `staging`, `uat`, `prod` |
+| Region swap | `us-east-1` → `eu-west-1`, `ap-south-1` |
+| Data-center swap | `iad` → `sjc`, `fra` |
+| Country swap | `us` → `uk`, `de`, `jp` |
+| Version swap | `v1` → `v2`, `v3` |
+| Color swap | `blue` → `green` |
+| Instance swap | `primary` → `replica`, `standby` |
+| Direction swap | `east` → `west` |
+| First-label brute | `api.example.com` → `admin.example.com` |
+| Word fill | `store-api` → `shop-api` |
+
+### Predict
+
+```bash
+subseer subs.txt --predict --gpt
+```
+
+```bash
+subseer subs.txt --predict --ollama
+```
+
+The `predict` mode uses an LLM to infer likely subdomains from your list.
+
+## Usage
+
+<!-- usage:start -->
+```
+usage: subseer [-h] [-d DOMAIN] [-q] [-v] [--mine] [--min-values N] [--fuzz]
+               [-w PATH] [--predict] [--predict-count N] [--gpt [MODEL]]
+               [--ollama [MODEL]] [--api-base URL] [--sample N] [--ai-runs N]
+               [-o PATH] [--limit N]
+               [input]
+
+Generate new subdomains from the ones you already know. Runs offline by
+default (Mine + Fuzz); add --gpt or --ollama to use an LLM.
+
+positional arguments:
+  input                File of subdomains, one per line.
+
+options:
+  -h, --help           show this help message and exit
+  -d, --domain DOMAIN  A single domain instead of a file.
+  -q, --quiet          Results and errors only.
+  -v, --version        Show the version and exit.
+
+Mine (offline):
+  Fill the naming patterns found in your list.
+
+  --mine               Run Mine.
+  --min-values N       Distinct values a slot needs (default auto).
+
+Fuzz (offline):
+  Permute each host, like gotator or altdns.
+
+  --fuzz               Run Fuzz.
+  -w, --wordlist PATH  Wordlist (default: bundled SecLists top 20k, or
+                       $SUBSEER_WORDLIST).
+
+Predict (needs an LLM):
+  An LLM infers likely subdomains from your list.
+
+  --predict            Run Predict.
+  --predict-count N    Max names to request (default 1000).
+
+LLM:
+  Required for Predict; enhances Mine.
+
+  --gpt [MODEL]        OpenAI-compatible model (default gpt-4o-mini). Reads
+                       $OPENAI_API_KEY.
+  --ollama [MODEL]     Local Ollama model (default qwen2.5).
+  --api-base URL       LLM endpoint (default: OpenAI, or localhost:11434 for
+                       --ollama).
+  --sample N           Subs sent to the model per call (default auto).
+  --ai-runs N          Model calls (default auto: enough to send every sub,
+                       max 10).
+
+Output:
+  -o, --out PATH       Write to a file (default: stdout, progress on stderr).
+  --limit N            Max results (default 200000; 0 = no limit).
+```
+<!-- usage:end -->
+
+## Logging
+
+Each run is appended to `~/.subseer/logs.jsonl` for debugging, one JSON line per
+run. Set `$SUBSEER_LOG_DIR` to log somewhere else.
+
