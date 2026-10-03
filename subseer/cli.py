@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Distinct values a slot needs (default auto).")
 
     f = p.add_argument_group("Fuzz (offline)",
-                             "Permute each host, like gotator or altdns.")
+                             "Permute each host offline.")
     f.add_argument("--fuzz", action="store_true", help="Run Fuzz.")
     f.add_argument("-w", "--wordlist", metavar="PATH",
                    help="Wordlist (default: bundled SecLists top 20k, "

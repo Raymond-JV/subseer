@@ -227,7 +227,7 @@ Mine (offline):
   --min-values N       Distinct values a slot needs (default auto).
 
 Fuzz (offline):
-  Permute each host, like gotator or altdns.
+  Permute each host offline.
 
   --fuzz               Run Fuzz.
   -w, --wordlist PATH  Wordlist (default: bundled SecLists top 20k, or
