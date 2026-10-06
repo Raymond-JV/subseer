@@ -198,6 +198,10 @@ subseer subs.txt --predict --ollama
 
 The `predict` mode uses an LLM to infer likely subdomains from your list.
 
+<p align="center">
+  <img src="assets/predict.gif" alt="subseer --predict --gpt subs.txt">
+</p>
+
 ## Usage
 
 <!-- usage:start -->
