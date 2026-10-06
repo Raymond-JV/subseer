@@ -7,7 +7,7 @@
 <p align="center"><i>sees the subs you don't</i></p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="subseer --predict --gpt subs.txt">
+  <img src="assets/mine.gif" alt="subseer --mine --gpt subdomains.txt">
 </p>
 
 Subseer generates new subdomains from the ones you already know. It runs offline, and
