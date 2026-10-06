@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/seer.svg" alt="subseer" width="280">
+  <img src="https://raw.githubusercontent.com/Raymond-JV/subseer/master/assets/seer.svg" alt="subseer" width="280">
 </p>
 
 <h1 align="center">subseer</h1>
@@ -7,7 +7,7 @@
 <p align="center"><i>sees the subs you don't</i></p>
 
 <p align="center">
-  <img src="assets/mine.gif" alt="subseer --mine --gpt subdomains.txt">
+  <img src="https://raw.githubusercontent.com/Raymond-JV/subseer/master/assets/mine.gif" alt="subseer --mine --gpt subdomains.txt">
 </p>
 
 Subseer generates new subdomains from the ones you already know. It runs offline, and
@@ -30,7 +30,7 @@ Built for authorized recon (bug bounty / pentest).
 ## Install
 
 ```bash
-pipx install git+https://github.com/Raymond-JV/subseer
+pipx install subseer
 ```
 
 For OpenAI (`--gpt`), set your API key:
@@ -199,7 +199,7 @@ subseer subs.txt --predict --ollama
 The `predict` mode uses an LLM to infer likely subdomains from your list.
 
 <p align="center">
-  <img src="assets/predict.gif" alt="subseer --predict --gpt subs.txt">
+  <img src="https://raw.githubusercontent.com/Raymond-JV/subseer/master/assets/predict.gif" alt="subseer --predict --gpt subs.txt">
 </p>
 
 ## Usage
